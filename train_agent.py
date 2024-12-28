@@ -46,7 +46,12 @@ def train(args):
 
     env = gym.make("ALE/SpaceInvaders-v5", render_mode="rgb_array")
 
-    agent = getattr(models, args.agent)(env=env)
+    if args.tune_hyperparameters:
+        args.lr = wandb.config['lr']
+        args.gamma = wandb.config['gamma']
+        args.eps = wandb.config['eps']
+
+    agent = getattr(models, args.agent)(env=env, lr=args.lr, gamma=args.gamma, decay_steps=args.decay_steps, memory_capacity=args.memory_capacity)
 
     video_dir = os.path.join(experiment_dir, f"video/")
     os.makedirs(video_dir, exist_ok=True)
