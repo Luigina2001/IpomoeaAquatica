@@ -1,7 +1,7 @@
-
-import os 
+import os
 import torch
 import random
+import matplotlib
 
 import numpy as np
 import torch.nn as nn
@@ -17,6 +17,8 @@ from .rl_agent import RLAgent
 from gymnasium.wrappers import AtariPreprocessing
 from collections import namedtuple, deque
 
+# Fix 'NSInternalInconsistencyException' on MacOS
+matplotlib.use('agg')
 
 Transition = namedtuple(
     'Transition', ('state', 'action', 'reward', 'next_state'))
@@ -37,8 +39,10 @@ class ReplayMemory:
 
 
 class DQN(RLAgent, nn.Module):
-    def __init__(self, env, n_channels: int = 1, n_actions: int = 6, gamma: int = 0.99, eps_start: int = 1, eps_end: int = 0.01,
-                 decay_steps: int = 1_000_000, memory_capacity: int = 1_000_000, lr: int = 0.000025, frame_skip: int = 3, noop_max: int = 30):
+    def __init__(self, env, n_channels: int = 1, n_actions: int = 6, gamma: int = 0.99, eps_start: int = 1,
+                 eps_end: int = 0.01,
+                 decay_steps: int = 1_000_000, memory_capacity: int = 1_000_000, lr: int = 0.000025,
+                 frame_skip: int = 3, noop_max: int = 30):
         RLAgent.__init__(self, env, lr, gamma, eps_start, eps_end, decay_steps)
         nn.Module.__init__(self)
 
@@ -121,7 +125,7 @@ class DQN(RLAgent, nn.Module):
         batch = Transition(*zip(*transitions))
 
         state_batch = torch.stack(tuple(torch.tensor(state)
-                                  for state in batch.state), dim=0)
+                                        for state in batch.state), dim=0)
         state_batch = state_batch.unsqueeze(1)
         action_batch = torch.tensor(batch.action, dtype=torch.int64)
         reward_batch = torch.tensor(batch.reward, dtype=torch.float32)
@@ -155,7 +159,8 @@ class DQN(RLAgent, nn.Module):
 
         return loss.item()
 
-    def dq_learning(self, n_episodes: int, batch_size: int = 32, c: int = 10_000, replay_start_size: int = 50_000, max_steps: int = 1_000_000, wandb_run=None, video_dir=None):
+    def dq_learning(self, n_episodes: int, batch_size: int = 32, c: int = 10_000, replay_start_size: int = 50_000,
+                    max_steps: int = 1_000_000, wandb_run=None, video_dir=None):
 
         target_q_network = DQN(
             env=self.env, n_channels=self.n_channels, n_actions=self.n_actions)
@@ -230,20 +235,20 @@ class DQN(RLAgent, nn.Module):
                     plt.ylabel('Reward')
 
                     wandb_run.log({"avg_loss": avg_loss / T, "avg_reward": score / T,
-                                  "game_score": score, "DQN on Space Invaders": plt})
+                                   "game_score": score, "DQN on Space Invaders": plt})
 
                 # TODO: Improve model checkpointing
-                if processed_frames >= replay_start_size: 
+                if processed_frames >= replay_start_size:
                     if best_score < score:
                         print(
-                            f"\n\n================\Score improved from {best_score} to {score} - Diff: {score - best_score}")
+                            f"\n\n================\nScore improved from {best_score} to {score} - Diff: {score - best_score}")
 
                         checkpoint_filename = f"DQN_ep_{episode}_{score}.ckpt"
                         checkpoint_path = osp.join(
                             osp.dirname(video_dir), checkpoint_filename)
                         print(f"Saving model checkpoint to {checkpoint_path}")
                         self.save_model(checkpoint_path)
-                        print("Model saved!\n\n================\n")
+                        print("Model saved!\n================\n")
 
                         curr_patience = 0
                         best_score = score
@@ -256,7 +261,7 @@ class DQN(RLAgent, nn.Module):
                         if video_dir and osp.exists(video_path):
                             os.remove(video_path)
                         curr_patience += 1
-            self.env.close()    
+            self.env.close()
 
     def initialize_env(self, frame_skip, noop_max):
         # disable frame skipping in original env if enabled

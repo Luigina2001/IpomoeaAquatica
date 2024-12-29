@@ -49,7 +49,6 @@ def train(args):
     if args.tune_hyperparameters:
         args.lr = wandb.config['lr']
         args.gamma = wandb.config['gamma']
-        args.eps = wandb.config['eps']
 
     agent = getattr(models, args.agent)(env=env, lr=args.lr, gamma=args.gamma, decay_steps=args.decay_steps, memory_capacity=args.memory_capacity)
 
