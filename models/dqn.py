@@ -13,6 +13,8 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from itertools import count
 from .rl_agent import RLAgent
+from utils import EarlyStopping
+from utils.constants import PATIENCE
 
 from gymnasium.wrappers import AtariPreprocessing
 from collections import namedtuple, deque
@@ -160,7 +162,11 @@ class DQN(RLAgent, nn.Module):
         return loss.item()
 
     def dq_learning(self, n_episodes: int, batch_size: int = 32, c: int = 10_000, replay_start_size: int = 50_000,
-                    max_steps: int = 1_000_000, wandb_run=None, video_dir=None):
+                    max_steps: int = 1_000_000, wandb_run=None, video_dir=None, checkpoint_dir=None, patience: int = PATIENCE):
+
+        if checkpoint_dir:
+            early_stopping = EarlyStopping(
+                "Reward", "maximize", checkpoint_dir=checkpoint_dir, patience=patience)
 
         target_q_network = DQN(
             env=self.env, n_channels=self.n_channels, n_actions=self.n_actions)
@@ -169,15 +175,13 @@ class DQN(RLAgent, nn.Module):
 
         processed_frames = 0
         curr_loss = 0
-        curr_patience = 0
-        patience = n_episodes / 10
-        best_score = float('-inf')
         rewards_per_episode = []
 
         with tqdm(range(n_episodes)) as pg_bar:
             for episode in pg_bar:
                 if video_dir:
-                    video_path = osp.join(video_dir, f"video_DQN_episode-{episode}.mp4")
+                    video_path = osp.join(
+                        video_dir, f"video_DQN_episode-{episode}.mp4")
 
                 state, _ = self.env.reset()
                 avg_loss = 0.0
@@ -237,30 +241,16 @@ class DQN(RLAgent, nn.Module):
                     wandb_run.log({"avg_loss": avg_loss / T, "avg_reward": score / T,
                                    "game_score": score, "DQN on Space Invaders": plt})
 
-                # TODO: Improve model checkpointing
-                if processed_frames >= replay_start_size:
-                    if best_score < score:
-                        print(
-                            f"\n\n================\nScore improved from {best_score} to {score} - Diff: {score - best_score}")
-
-                        checkpoint_filename = f"DQN_ep_{episode}_{score}.ckpt"
-                        checkpoint_path = osp.join(
-                            osp.dirname(video_dir), checkpoint_filename)
-                        print(f"Saving model checkpoint to {checkpoint_path}")
-                        self.save_model(checkpoint_path)
-                        print("Model saved!\n================\n")
-
-                        curr_patience = 0
-                        best_score = score
-                    elif curr_patience > patience:
-                        print(
-                            f"\n================\nModel did not improve for {patience} episodes! Stopping...")
-                        break
-                    else:
-                        # If not the best episode, clean up the video
+                if checkpoint_dir and processed_frames >= replay_start_size:
+                    counter = early_stopping.counter
+                    if early_stopping(score, self, episode):
                         if video_dir and osp.exists(video_path):
                             os.remove(video_path)
-                        curr_patience += 1
+                        break
+                    elif video_dir and counter < early_stopping.counter:
+                        if osp.exists(video_path):
+                            os.remove(video_path)
+
             self.env.close()
 
     def initialize_env(self, frame_skip, noop_max):
