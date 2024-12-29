@@ -14,7 +14,7 @@ from tqdm import tqdm
 from itertools import count
 from .rl_agent import RLAgent
 from utils import EarlyStopping
-from utils.constants import PATIENCE
+from utils.constants import PATIENCE, MAX_STEPS
 
 from gymnasium.wrappers import AtariPreprocessing
 from collections import namedtuple, deque
@@ -162,7 +162,7 @@ class DQN(RLAgent, nn.Module):
         return loss.item()
 
     def dq_learning(self, n_episodes: int, batch_size: int = 32, c: int = 10_000, replay_start_size: int = 50_000,
-                    max_steps: int = 1_000_000, wandb_run=None, video_dir=None, checkpoint_dir=None, patience: int = PATIENCE):
+                    max_steps: int = MAX_STEPS, wandb_run=None, video_dir=None, checkpoint_dir=None, patience: int = PATIENCE):
 
         if checkpoint_dir:
             early_stopping = EarlyStopping(
@@ -175,7 +175,6 @@ class DQN(RLAgent, nn.Module):
 
         processed_frames = 0
         curr_loss = 0
-        rewards_per_episode = []
 
         with tqdm(range(n_episodes)) as pg_bar:
             for episode in pg_bar:
@@ -187,7 +186,7 @@ class DQN(RLAgent, nn.Module):
                 avg_loss = 0.0
                 score = 0.0  # it is the same as the game score
 
-                for T in count():
+                for T in range(max_steps):
                     action = self.policy(state)
                     next_state, reward, terminated, truncated, _ = self.env.step(
                         action)
@@ -223,7 +222,7 @@ class DQN(RLAgent, nn.Module):
                     if video_dir:
                         self.env.render()
 
-                    if done or (T + 1) >= max_steps:
+                    if done:
                         break
 
                     state = next_state
@@ -231,10 +230,10 @@ class DQN(RLAgent, nn.Module):
                     pg_bar.set_description(
                         f"Episode: {episode}, Processed Frames: {processed_frames}, Step: {T}, Current Loss: {curr_loss:.2f}, Current Score: {score}")
 
-                rewards_per_episode.append(score)
+                self.rewards_per_episode.append(score)
 
                 if wandb_run:
-                    plt.plot(rewards_per_episode)
+                    plt.plot(self.rewards_per_episode)
                     plt.xlabel('Episode')
                     plt.ylabel('Reward')
 

@@ -4,7 +4,7 @@ import random
 import cv2
 import numpy as np
 
-from utils.constants import PLAYER_COLOR, EARTH_COLOR, INVADERS_COLOR, SHIELD_COLOR, MOTHERSHIP_COLOR
+from .constants import PLAYER_COLOR, EARTH_COLOR, INVADERS_COLOR, SHIELD_COLOR, MOTHERSHIP_COLOR
 
 
 def seed_everything(seed: int):

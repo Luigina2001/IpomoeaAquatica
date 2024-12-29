@@ -46,11 +46,26 @@ def train(args):
 
     env = gym.make("ALE/SpaceInvaders-v5", render_mode="rgb_array")
 
-    if args.tune_hyperparameters:
-        args.lr = wandb.config['lr']
-        args.gamma = wandb.config['gamma']
+    agent_parameters = {
+        "env": env, 
+        "lr": args.lr, 
+        "gamma": args.gamma,
+        "eps_start": args.eps_start,
+        "eps_end": args.eps_end, 
+        "decay_steps": args.decay_steps
+    }
 
-    agent = getattr(models, args.agent)(env=env, lr=args.lr, gamma=args.gamma, decay_steps=args.decay_steps, memory_capacity=args.memory_capacity)
+    if agent_name == "DQN":
+        agent_parameters.update({
+            "memory_capacity": args.memory_capacity
+        })
+
+    if args.tune_hyperparameters:
+        agent_parameters["lr"] = wandb.config['lr']
+        agent_parameters["gamma"] = wandb.config['gamma']
+
+
+    agent = getattr(models, args.agent)(**agent_parameters, memory_capacity=args.memory_capacity)
 
     video_dir = os.path.join(experiment_dir, f"video/")
     os.makedirs(video_dir, exist_ok=True)
@@ -59,6 +74,9 @@ def train(args):
     if agent_name == "DQN":
         agent.dq_learning(n_episodes=args.n_episodes, batch_size=args.batch_size,
                           replay_start_size=args.replay_start_size, max_steps=args.n_steps, wandb_run=run, video_dir=video_dir, checkpoint_dir=experiment_dir, patience=args.patience)
+    elif agent_name == "QLearning":
+        agent.train(n_episodes=args.n_episodes, max_steps=args.n_steps, wandb_run=run, video_dir=video_dir, checkpoint_dir=experiment_dir, patience=args.patience)
+    
 
     if not args.no_log_to_wandb:
         run.finish()
@@ -106,8 +124,8 @@ def argument_parser():
     parser.add_argument("--experiment_dir", type=str,
                         default=osp.join(os.getcwd(), "experiments"))
     parser.add_argument("--checkpoint_path", type=str, default=None)
-    parser.add_argument("--agent", type=str, default="MonteCarlo",
-                        choices=["MonteCarlo", "SARSA", "QLearning", "DQN"])
+    parser.add_argument("--agent", type=str, default="DQN",
+                        choices=["QLearning", "DQN"])
     parser.add_argument("--every_visit", action="store_true", default=False,
                         help="Boolean to discern between first-visit and every-visit Monte Carlo methods")
     parser.add_argument("--batch_size", type=int, default=32,

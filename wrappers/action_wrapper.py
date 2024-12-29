@@ -1,6 +1,6 @@
 from gymnasium import ActionWrapper
 
-from .constants import FIRE, RIGHTFIRE, LEFTFIRE
+from utils.constants import FIRE, RIGHTFIRE, LEFTFIRE
 
 
 class Action(ActionWrapper):
@@ -16,7 +16,7 @@ class Action(ActionWrapper):
         Overrides the step method to notify when the agent shoots.
         The agent shooting corresponds to specific action IDs (1, 4, or 5).
         """
-        obs, reward, terminated, truncated, info = self.env.step(action)
+        obs, reward_info, terminated, truncated, _ = self.env.step(action)
 
         self.env.get_wrapper_attr('set_last_action')(action)
 
@@ -28,4 +28,4 @@ class Action(ActionWrapper):
             if self.env.has_wrapper_attr('reset_score'):
                 self.env.get_wrapper_attr('reset_score')()
 
-        return obs, reward, terminated, truncated, info
+        return obs, reward_info, terminated, truncated, _
