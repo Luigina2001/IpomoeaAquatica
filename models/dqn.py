@@ -84,7 +84,7 @@ class DQN(RLAgent, nn.Module):
         if self.training and np.random.uniform(0, 1) < self.eps:
             # Exploration: pull random action
             return torch.tensor(np.random.choice(self.n_actions))
-        # Exploitation: pull best greedy action
+        # Exploitation: pull the best greedy action
         with torch.no_grad():
             state = torch.tensor(state, dtype=torch.float32).unsqueeze(
                 0)  # Add batch dimension

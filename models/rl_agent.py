@@ -1,5 +1,8 @@
+import hashlib
 import os
 import pickle
+from collections import defaultdict
+
 import numpy as np
 import os.path as osp
 
@@ -7,6 +10,10 @@ from abc import abstractmethod
 from utils import EarlyStopping
 from utils.constants import PATIENCE
 
+
+
+def init_q_table():
+    return 1
 
 class RLAgent:
     def __init__(self, env, lr, gamma, eps_start, eps_end, decay_steps, *args, **kwargs):
@@ -19,10 +26,17 @@ class RLAgent:
         self.decay_steps = decay_steps
         self.decay_rate = (self.eps_start - self.eps_end) / self.decay_steps
         self.train_mode = True
+        self.count_noop = 0
+        self.q_table = defaultdict(init_q_table)
         self.rewards_per_episode = []
 
     def reset_environment(self):
         return self.env.reset()
+
+
+    def encode_state(self, state):
+        frame, _ = state
+        return hashlib.sha256(frame.tobytes()).hexdigest()
 
     def close_environment(self):
         self.env.close()
@@ -58,12 +72,24 @@ class RLAgent:
             return int(self.env.action_space.sample())
 
         # Exploitation
-        econded_state = self.encode_state(state)
+        max_q = float("-inf")
+        best_action = None
+        encoded_state = self.encode_state(state)
         for action in range(self.env.action_space.n):
-            if (econded_state, action) in self.q_table:
-                return action
+            if (encoded_state, action) in self.q_table:
+                if self.q_table[(encoded_state, action)] > max_q:
+                    max_q = self.q_table[(encoded_state, action)]
+                    best_action = action
 
-        return 0
+        if max != float("-inf"):
+            if best_action == 0:
+                self.count_noop += 1
+            if self.count_noop == 10:
+                self.count_noop = 0
+                best_action = np.random.choice([1, 2, 3, 4, 5])
+            return int(best_action)
+
+        return int(np.random.choice([1, 2, 3, 4, 5]))
 
     def eps_schedule(self, current_step):
         self.eps = max(self.eps_end, self.eps_start -

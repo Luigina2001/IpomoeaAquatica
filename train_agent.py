@@ -8,13 +8,16 @@ import argparse
 import os.path as osp
 import gymnasium as gym
 
-from tqdm import tqdm
 from functools import partial
 from utils import seed_everything
 from gymnasium.wrappers import RecordVideo
 from utils.constants import N_EPISODES, N_STEPS, PATIENCE
 
 gym.register_envs(ale_py)
+
+
+def episode_trigger(t):
+    return True
 
 
 def train(args):
@@ -47,11 +50,11 @@ def train(args):
     env = gym.make("ALE/SpaceInvaders-v5", render_mode="rgb_array")
 
     agent_parameters = {
-        "env": env, 
-        "lr": args.lr, 
+        "env": env,
+        "lr": args.lr,
         "gamma": args.gamma,
         "eps_start": args.eps_start,
-        "eps_end": args.eps_end, 
+        "eps_end": args.eps_end,
         "decay_steps": args.decay_steps
     }
 
@@ -64,19 +67,19 @@ def train(args):
         agent_parameters["lr"] = wandb.config['lr']
         agent_parameters["gamma"] = wandb.config['gamma']
 
-
     agent = getattr(models, args.agent)(**agent_parameters, memory_capacity=args.memory_capacity)
 
     video_dir = os.path.join(experiment_dir, f"video/")
     os.makedirs(video_dir, exist_ok=True)
-    agent.env = RecordVideo(agent.env, video_folder=video_dir, name_prefix=f"video_{agent_name}")
+    agent.env = RecordVideo(agent.env, episode_trigger=episode_trigger, video_folder=video_dir, name_prefix=f"video_{agent_name}")
 
     if agent_name == "DQN":
         agent.dq_learning(n_episodes=args.n_episodes, batch_size=args.batch_size,
-                          replay_start_size=args.replay_start_size, max_steps=args.n_steps, wandb_run=run, video_dir=video_dir, checkpoint_dir=experiment_dir, patience=args.patience)
+                          replay_start_size=args.replay_start_size, max_steps=args.n_steps, wandb_run=run,
+                          video_dir=video_dir, checkpoint_dir=experiment_dir, patience=args.patience)
     elif agent_name == "QLearning":
-        agent.train(n_episodes=args.n_episodes, max_steps=args.n_steps, wandb_run=run, video_dir=video_dir, checkpoint_dir=experiment_dir, patience=args.patience)
-    
+        agent.train(n_episodes=args.n_episodes, max_steps=args.n_steps, wandb_run=run, video_dir=video_dir,
+                    checkpoint_dir=experiment_dir, patience=args.patience)
 
     if not args.no_log_to_wandb:
         run.finish()
