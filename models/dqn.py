@@ -5,22 +5,15 @@ import matplotlib
 
 import numpy as np
 import torch.nn as nn
-import os.path as osp
 import torch.optim as optim
-import matplotlib.pyplot as plt
 import torch.nn.functional as F
 
 from tqdm import tqdm
-from itertools import count
 from .rl_agent import RLAgent
-from utils import EarlyStopping
 from utils.constants import PATIENCE, MAX_STEPS
 
 from gymnasium.wrappers import AtariPreprocessing
 from collections import namedtuple, deque
-
-# Fix 'NSInternalInconsistencyException' on MacOS
-matplotlib.use('agg')
 
 Transition = namedtuple(
     'Transition', ('state', 'action', 'reward', 'next_state'))
@@ -164,9 +157,8 @@ class DQN(RLAgent, nn.Module):
     def dq_learning(self, n_episodes: int, batch_size: int = 32, c: int = 10_000, replay_start_size: int = 50_000,
                     max_steps: int = MAX_STEPS, wandb_run=None, video_dir=None, checkpoint_dir=None, patience: int = PATIENCE):
 
-        if checkpoint_dir:
-            early_stopping = EarlyStopping(
-                "Reward", "maximize", checkpoint_dir=checkpoint_dir, patience=patience)
+        early_stopping = self.initialize_early_stopping(
+            checkpoint_dir, patience)
 
         target_q_network = DQN(
             env=self.env, n_channels=self.n_channels, n_actions=self.n_actions)
@@ -178,11 +170,10 @@ class DQN(RLAgent, nn.Module):
 
         with tqdm(range(n_episodes)) as pg_bar:
             for episode in pg_bar:
-                if video_dir:
-                    video_path = osp.join(
-                        video_dir, f"video_DQN_episode-{episode}.mp4")
+                video_path = self.handle_video(
+                    video_dir, episode, prefix="DQN")
 
-                state, _ = self.env.reset()
+                state, _ = self.reset_environment()
                 avg_loss = 0.0
                 score = 0.0  # it is the same as the game score
 
@@ -219,9 +210,6 @@ class DQN(RLAgent, nn.Module):
                     if processed_frames % c == 0:
                         target_q_network.load_state_dict(self.state_dict())
 
-                    if video_dir:
-                        self.env.render()
-
                     if done:
                         break
 
@@ -232,25 +220,14 @@ class DQN(RLAgent, nn.Module):
 
                 self.rewards_per_episode.append(score)
 
-                if wandb_run:
-                    plt.plot(self.rewards_per_episode)
-                    plt.xlabel('Episode')
-                    plt.ylabel('Reward')
+                self.log_results(wandb_run, {"avg_loss": avg_loss / T, "avg_reward": score / T,
+                                             "game_score": score})
 
-                    wandb_run.log({"avg_loss": avg_loss / T, "avg_reward": score / T,
-                                   "game_score": score, "DQN on Space Invaders": plt})
+                if self.handle_early_stopping(
+                        early_stopping=early_stopping, reward=reward, agent=self, episode=episode, video_path=video_path):
+                    break
 
-                if checkpoint_dir and processed_frames >= replay_start_size:
-                    counter = early_stopping.counter
-                    if early_stopping(score, self, episode):
-                        if video_dir and osp.exists(video_path):
-                            os.remove(video_path)
-                        break
-                    elif video_dir and counter < early_stopping.counter:
-                        if osp.exists(video_path):
-                            os.remove(video_path)
-
-            self.env.close()
+            self.close_environment()
 
     def initialize_env(self, frame_skip, noop_max):
         # disable frame skipping in original env if enabled

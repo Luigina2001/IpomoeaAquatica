@@ -36,6 +36,8 @@ class EarlyStopping:
         )
 
         if has_improved:
+            self.trace_func(
+                f"{self.metric_to_track} improved from {self.best_value} to {metric_value}!")
             self.counter = 0
             self.best_value = metric_value
             self.save_checkpoint(metric_value, model, episode)

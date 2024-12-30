@@ -1,10 +1,11 @@
+import os
 import pickle
+import numpy as np
 import os.path as osp
 
-
-import numpy as np
-
 from abc import abstractmethod
+from utils import EarlyStopping
+from utils.constants import PATIENCE
 
 
 class RLAgent:
@@ -20,6 +21,33 @@ class RLAgent:
         self.train_mode = True
         self.rewards_per_episode = []
 
+    def reset_environment(self):
+        return self.env.reset()
+
+    def close_environment(self):
+        self.env.close()
+
+    def handle_video(self, video_dir, episode, prefix="video"):
+        if video_dir:
+            return osp.join(video_dir, f"{prefix}_episode-{episode}.mp4")
+        return None
+
+    def initialize_early_stopping(self, checkpoint_dir: str, patience: int = PATIENCE, metric: str = "Reward", objective: str = "maximize"):
+        if checkpoint_dir:
+            return EarlyStopping(metric, objective, checkpoint_dir=checkpoint_dir, patience=patience)
+        return None
+
+    def log_results(self, wandb_run, episode_data):
+        if wandb_run:
+            wandb_run.log(episode_data)
+
+    def handle_early_stopping(self, early_stopping, reward, agent, episode, video_path):
+        if early_stopping and early_stopping(reward, agent, episode):
+            if video_path and osp.exists(video_path):
+                os.remove(video_path)
+            return True
+        return False
+
     def policy(self, state):
         if self.env is None:
             raise ValueError(
@@ -27,7 +55,7 @@ class RLAgent:
 
         if self.train_mode and np.random.uniform(0, 1) < self.eps:
             # Exploration
-            return self.env.action_space.sample()
+            return int(self.env.action_space.sample())
 
         # Exploitation
         econded_state = self.encode_state(state)
@@ -35,7 +63,7 @@ class RLAgent:
             if (econded_state, action) in self.q_table:
                 return action
 
-        return
+        return 0
 
     def eps_schedule(self, current_step):
         self.eps = max(self.eps_end, self.eps_start -
@@ -65,9 +93,6 @@ class RLAgent:
             model_state.update(
                 {'extra_parameters': {'train_mode': self.train_mode}})
 
-        if hasattr(self, 'train_mode'):
-            model_state['extra_parameters'].update({'q_table': self.q_table})
-
         return model_state
 
     def save_model(self, checkpoint_path: str):
@@ -90,7 +115,6 @@ class RLAgent:
 
             instance = cls(**model_state['std_parameters'])
             instance.train_mode = model_state['extra_parameters']['train_mode']
-            instance.q_table = model_state['extra_parameters']['q_table']
 
             if return_params:
                 return instance, model_state
