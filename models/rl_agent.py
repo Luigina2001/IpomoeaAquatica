@@ -11,9 +11,9 @@ from utils import EarlyStopping
 from utils.constants import PATIENCE
 
 
-
 def init_q_table():
     return 1
+
 
 class RLAgent:
     def __init__(self, env, lr, gamma, eps_start, eps_end, decay_steps, *args, **kwargs):
@@ -33,7 +33,6 @@ class RLAgent:
     def reset_environment(self):
         return self.env.reset()
 
-
     def encode_state(self, state):
         frame, _ = state
         return hashlib.sha256(frame.tobytes()).hexdigest()
@@ -43,7 +42,7 @@ class RLAgent:
 
     def handle_video(self, video_dir, episode, prefix="video"):
         if video_dir:
-            return osp.join(video_dir, f"{prefix}_episode-{episode}.mp4")
+            return osp.join(video_dir, f"video_{prefix}-episode-{episode}.mp4")
         return None
 
     def initialize_early_stopping(self, checkpoint_dir: str, patience: int = PATIENCE, metric: str = "Reward", objective: str = "maximize"):
@@ -60,6 +59,7 @@ class RLAgent:
             if video_path and osp.exists(video_path):
                 os.remove(video_path)
             return True
+
         return False
 
     def policy(self, state):
@@ -81,7 +81,7 @@ class RLAgent:
                     max_q = self.q_table[(encoded_state, action)]
                     best_action = action
 
-        if max != float("-inf"):
+        if max_q != float("-inf"):
             if best_action == 0:
                 self.count_noop += 1
             if self.count_noop == 10:
@@ -106,7 +106,6 @@ class RLAgent:
     def serialize(self):
         model_state = {
             'std_parameters': {
-                'env': self.env,
                 'lr': self.lr,
                 'gamma': self.gamma,
                 'eps_start': self.eps_start,
@@ -130,7 +129,7 @@ class RLAgent:
             raise ValueError(f"Error saving model to {checkpoint_path}: {e}")
 
     @classmethod
-    def load_model(cls, checkpoint_path: str, return_params: bool = False):
+    def load_model(cls, env, checkpoint_path: str, return_params: bool = False):
         if not osp.exists(checkpoint_path):
             raise FileNotFoundError(
                 f"Checkpoint file {checkpoint_path} not found.")
@@ -139,8 +138,8 @@ class RLAgent:
             with open(checkpoint_path, "rb") as f:
                 model_state = pickle.load(f)
 
-            instance = cls(**model_state['std_parameters'])
-            instance.train_mode = model_state['extra_parameters']['train_mode']
+            instance = cls(env=env, **model_state['std_parameters'])
+            # instance.train_mode = model_state['extra_parameters']['train_mode']
 
             if return_params:
                 return instance, model_state

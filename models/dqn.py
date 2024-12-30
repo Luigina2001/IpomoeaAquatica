@@ -1,9 +1,9 @@
 import os
 import torch
 import random
-import matplotlib
 
 import numpy as np
+import os.path as osp
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
@@ -79,6 +79,7 @@ class DQN(RLAgent, nn.Module):
         self.initialize_env(frame_skip=self.frame_skip, noop_max=self.noop_max)
 
         del self.train_mode
+        del self.q_table
 
     def policy(self, state):
         if self.training and np.random.uniform(0, 1) < self.eps:
@@ -167,15 +168,23 @@ class DQN(RLAgent, nn.Module):
 
         processed_frames = 0
         curr_loss = 0
+        avg_playtime = 0
 
         with tqdm(range(n_episodes)) as pg_bar:
             for episode in pg_bar:
-                video_path = self.handle_video(
-                    video_dir, episode, prefix="DQN")
 
                 state, _ = self.reset_environment()
                 avg_loss = 0.0
                 score = 0.0  # it is the same as the game score
+                
+                if prev_counter < early_stopping.counter:
+                    if video_path and osp.exists(video_path):
+                        os.remove(video_path)
+
+                video_path = self.handle_video(
+                    video_dir, episode, prefix="DQN")
+
+                prev_counter = early_stopping.counter
 
                 for T in range(max_steps):
                     action = self.policy(state)
@@ -223,9 +232,17 @@ class DQN(RLAgent, nn.Module):
                 self.log_results(wandb_run, {"avg_loss": avg_loss / T, "avg_reward": score / T,
                                              "game_score": score})
 
+                if self.env.unwrapped.has_wrapper_attr("recorded_frames"):
+                    avg_playtime += len(
+                        self.env.unwrapped.get_wrapper_attr("recorded_frames"))
+
                 if self.handle_early_stopping(
                         early_stopping=early_stopping, reward=reward, agent=self, episode=episode, video_path=video_path):
                     break
+
+            if video_dir and avg_playtime > 0:
+                self.log_results(
+                    wandb_run, {"Playtime": avg_playtime // n_episodes})
 
             self.close_environment()
 
@@ -257,10 +274,10 @@ class DQN(RLAgent, nn.Module):
         torch.save(model_state_dict, checkpoint_path)
 
     @classmethod
-    def load_model(cls, checkpoint_path: str, return_params: bool = False):
+    def load_model(cls, env, checkpoint_path: str, return_params: bool = False):
         model_state_dict = torch.load(checkpoint_path)
 
-        instance = cls(**model_state_dict['std_parameters'])
+        instance = cls(env=env, **model_state_dict['std_parameters'])
         del model_state_dict['std_parameters']
 
         if 'extra_parameters' in model_state_dict:

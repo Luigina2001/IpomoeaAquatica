@@ -1,12 +1,12 @@
+import os
 import numpy as np
-from matplotlib import pyplot as plt
+import os.path as osp
 from tqdm import tqdm
 
 from .rl_agent import RLAgent
 from utils.constants import PATIENCE, MAX_STEPS
 from wrappers import Action, Observation, Reward
 from sklearn.preprocessing import minmax_scale
-
 
 
 class QLearning(RLAgent):
@@ -34,8 +34,8 @@ class QLearning(RLAgent):
         return model_state
 
     @classmethod
-    def load_model(cls, checkpoint_path: str, return_params: bool = False):
-        instance, model_state = super().load_model(checkpoint_path, True)
+    def load_model(cls, env, checkpoint_path: str, return_params: bool = False):
+        instance, model_state = super().load_model(env, checkpoint_path, True)
 
         instance.q_table = model_state["extra_parameters"]["q_table"]
 
@@ -46,21 +46,33 @@ class QLearning(RLAgent):
     def train(self, n_episodes: int, max_steps: int = MAX_STEPS, patience: int = PATIENCE, wandb_run=None, video_dir=None, checkpoint_dir=None):
         total_steps = 0
 
-        early_stopping = self.initialize_early_stopping(checkpoint_dir, patience, metric="Cumulative Reward")
+        early_stopping = self.initialize_early_stopping(
+            checkpoint_dir, patience, metric="Cumulative Reward")
+
+        avg_playtime = 0
+        prev_counter = 0
+        video_path = None
 
         with tqdm(range(n_episodes)) as pg_bar:
             for episode in pg_bar:
-
-                video_path = self.handle_video(
-                    video_dir, episode, prefix="QLearning")
 
                 state, _ = self.reset_environment()
                 cumulative_reward = 0
                 action_values = []
 
+                if prev_counter < early_stopping.counter:
+                    if video_path and osp.exists(video_path):
+                        os.remove(video_path)
+
+                video_path = self.handle_video(
+                    video_dir, episode, prefix="QLearning")
+
+                prev_counter = early_stopping.counter
+
                 for _ in range(max_steps):
                     action = self.policy(state)
-                    next_state, reward_info, truncated, terminated, info = self.env.step(action)
+                    next_state, reward_info, truncated, terminated, info = self.env.step(
+                        action)
                     total_steps += 1
                     cumulative_reward += reward_info['reward']
 
@@ -73,9 +85,9 @@ class QLearning(RLAgent):
                                 for a in range(self.env.action_space.n))
 
                     self.q_table[(enc_state, action)] = self.q_table[
-                                                            (enc_state, action)] + self.lr * (reward_info['reward']
-                                                                                              + self.gamma * max_q
-                                                                                              - self.q_table[(enc_state, action)])
+                        (enc_state, action)] + self.lr * (reward_info['reward']
+                                                          + self.gamma * max_q
+                                                          - self.q_table[(enc_state, action)])
                     action_values.append(self.q_table[(enc_state, action)])
 
                     if truncated or terminated:
@@ -83,24 +95,30 @@ class QLearning(RLAgent):
 
                     state = next_state
 
+                    pg_bar.set_description(
+                        f"Episode: {episode}, Step: {_}, Cumulative Reward: {cumulative_reward}, Current Score: {reward_info['score']}")
+
                 if action_values:
-                    normalized_q_values = minmax_scale(action_values, feature_range=(0, 1))
+                    normalized_q_values = minmax_scale(
+                        action_values, feature_range=(0, 1))
                     avg_q_value = np.mean(normalized_q_values)
 
+                if self.env.unwrapped.has_wrapper_attr("recorded_frames"):
+                    avg_playtime += len(
+                        self.env.unwrapped.get_wrapper_attr("recorded_frames"))
 
-                pg_bar.set_description(
-                    f"Episode: {episode}, Step: {_}, Cumulative Reward: {cumulative_reward}, Current Score: {reward_info['score']}")
-
-                self.log_results(
-                    wandb_run, {
-                        "Episode": episode,
-                        "Average Q-Value": avg_q_value,
-                        "Cumulative Reward": cumulative_reward,
-                        "Game Score": reward_info['score']
-                    })
+                self.log_results(wandb_run, {
+                    "Average Q-Value": avg_q_value,
+                    "Cumulative Reward": cumulative_reward,
+                    "Game Score": reward_info['score']
+                })
 
                 if self.handle_early_stopping(
                     early_stopping=early_stopping, reward=cumulative_reward, agent=self, episode=episode, video_path=video_path):
                     break
+
+            if video_dir and avg_playtime > 0:
+                self.log_results(
+                    wandb_run, {"Playtime": avg_playtime // n_episodes})
 
             self.close_environment()
