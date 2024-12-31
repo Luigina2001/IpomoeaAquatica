@@ -43,11 +43,11 @@ class QLearning(RLAgent):
             return instance, model_state
         return instance
 
-    def start_training(self, n_episodes: int, max_steps: int = MAX_STEPS, patience: int = PATIENCE, wandb_run=None, video_dir=None, checkpoint_dir=None):
+    def start_training(self, n_episodes: int, max_steps: int = MAX_STEPS, patience: int = PATIENCE, wandb_run=None,
+                       video_dir=None, checkpoint_dir=None):
         total_steps = 0
 
-        early_stopping = self.initialize_early_stopping(
-            checkpoint_dir, patience, metric="Cumulative Reward")
+        early_stopping = self.initialize_early_stopping(checkpoint_dir, patience)
 
         avg_playtime = 0
         prev_counter = 0
@@ -84,9 +84,10 @@ class QLearning(RLAgent):
                                 for a in range(self.env.action_space.n))
 
                     self.q_table[(enc_state, action)] = self.q_table[
-                        (enc_state, action)] + self.lr * (reward_info['reward']
-                                                          + self.gamma * max_q
-                                                          - self.q_table[(enc_state, action)])
+                                                            (enc_state, action)] + self.lr * (reward_info['reward']
+                                                                                              + self.gamma * max_q
+                                                                                              - self.q_table[
+                                                                                                  (enc_state, action)])
                     action_values.append(self.q_table[(enc_state, action)])
 
                     if truncated or terminated:
@@ -102,7 +103,7 @@ class QLearning(RLAgent):
                         action_values, feature_range=(0, 1))
                     avg_q_value = np.mean(normalized_q_values)
 
-                if self.env.has_wrapper_attr("recorded_frames") :
+                if self.env.has_wrapper_attr("recorded_frames"):
                     avg_playtime += len(self.env.get_wrapper_attr("recorded_frames"))
 
                 self.log_results(wandb_run, {
@@ -112,7 +113,8 @@ class QLearning(RLAgent):
                 })
 
                 if self.handle_early_stopping(
-                    early_stopping=early_stopping, reward=cumulative_reward, agent=self, episode=episode, video_path=video_path):
+                        early_stopping=early_stopping, reward=cumulative_reward, agent=self, episode=episode,
+                        video_path=video_path):
                     break
 
             if video_dir and avg_playtime > 0:

@@ -46,7 +46,7 @@ class DQN(RLAgent, nn.Module):
         self.n_channels = n_channels
         self.frame_skip = frame_skip
         self.memory_capacity = memory_capacity
-
+        self.dummy_param = nn.Parameter(torch.empty(0))
         ####################
         # CNN architecture #
         ####################
@@ -87,8 +87,8 @@ class DQN(RLAgent, nn.Module):
             return torch.tensor(np.random.choice(self.n_actions))
         # Exploitation: pull the best greedy action
         with torch.no_grad():
-            state = torch.tensor(state, dtype=torch.float32).unsqueeze(
-                0)  # Add batch dimension
+            # Add batch dimension
+            state = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.dummy_param.device)
             return torch.argmax(self.forward(state))
 
     def forward(self, x):
@@ -121,14 +121,14 @@ class DQN(RLAgent, nn.Module):
         batch = Transition(*zip(*transitions))
 
         state_batch = torch.stack(tuple(torch.tensor(state)
-                                        for state in batch.state), dim=0)
+                                        for state in batch.state), dim=0).to(self.dummy_param.device)
         state_batch = state_batch.unsqueeze(1)
-        action_batch = torch.tensor(batch.action, dtype=torch.int64)
-        reward_batch = torch.tensor(batch.reward, dtype=torch.float32)
+        action_batch = torch.tensor(batch.action, dtype=torch.int64).to(self.dummy_param.device)
+        reward_batch = torch.tensor(batch.reward, dtype=torch.float32).to(self.dummy_param.device)
         non_final_mask = torch.tensor(
-            tuple(map(lambda s: s is not None, batch.next_state)), dtype=torch.bool)
+            tuple(map(lambda s: s is not None, batch.next_state)), dtype=torch.bool).to(self.dummy_param.device)
         non_final_next_states = torch.stack(
-            [torch.from_numpy(s) for s in batch.next_state if s is not None]).to(dtype=torch.float32)
+            [torch.from_numpy(s) for s in batch.next_state if s is not None]).to(dtype=torch.float32).to(self.dummy_param.device)
         non_final_next_states = non_final_next_states.unsqueeze(1)
 
         action_distribution = self(state_batch)
@@ -155,8 +155,10 @@ class DQN(RLAgent, nn.Module):
 
         return loss.item()
 
-    def start_training(self, n_episodes: int, batch_size: int = 32, target_update_freq: int = 10_000, replay_start_size: int = 50_000,
-                    max_steps: int = MAX_STEPS, wandb_run=None, video_dir=None, checkpoint_dir=None, patience: int = PATIENCE):
+    def start_training(self, n_episodes: int, batch_size: int = 32, target_update_freq: int = 10_000,
+                       replay_start_size: int = 50_000,
+                       max_steps: int = MAX_STEPS, wandb_run=None, video_dir=None, checkpoint_dir=None,
+                       patience: int = PATIENCE):
 
         early_stopping = self.initialize_early_stopping(
             checkpoint_dir, patience)
@@ -177,7 +179,7 @@ class DQN(RLAgent, nn.Module):
                 state, _ = self.reset_environment()
                 avg_loss = 0.0
                 score = 0.0  # it is the same as the game score
-                
+
                 if prev_counter < early_stopping.counter:
                     if video_path and osp.exists(video_path):
                         os.remove(video_path)
@@ -238,7 +240,8 @@ class DQN(RLAgent, nn.Module):
                         self.env.unwrapped.get_wrapper_attr("recorded_frames"))
 
                 if self.handle_early_stopping(
-                        early_stopping=early_stopping, reward=reward, agent=self, episode=episode, video_path=video_path):
+                        early_stopping=early_stopping, reward=score, agent=self, episode=episode,
+                        video_path=video_path):
                     break
 
             if video_dir and avg_playtime > 0:

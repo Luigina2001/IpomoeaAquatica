@@ -47,7 +47,7 @@ class RLAgent:
             return osp.join(video_dir, f"video_{prefix}-episode-{episode}.mp4")
         return None
 
-    def initialize_early_stopping(self, checkpoint_dir: str, patience: int = PATIENCE, metric: str = "Reward", objective: str = "maximize"):
+    def initialize_early_stopping(self, checkpoint_dir: str, patience: int = PATIENCE, metric: str = "Cumulative Reward", objective: str = "maximize"):
         if checkpoint_dir:
             return EarlyStopping(metric, objective, checkpoint_dir=checkpoint_dir, patience=patience)
         return None
@@ -64,7 +64,7 @@ class RLAgent:
 
         return False
 
-    def policy(self, state):
+    def policy(self, state, *args, **kwargs):
         if self.env is None:
             raise ValueError(
                 "Environment not set. Please set the environment before calling the policy method.")
