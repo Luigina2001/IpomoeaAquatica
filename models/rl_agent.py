@@ -102,7 +102,7 @@ class RLAgent:
         raise NotImplementedError
 
     @abstractmethod
-    def train(self, *args, **kwargs):
+    def start_training(self, *args, **kwargs):
         pass
 
     def serialize(self):

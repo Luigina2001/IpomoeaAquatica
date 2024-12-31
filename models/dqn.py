@@ -155,7 +155,7 @@ class DQN(RLAgent, nn.Module):
 
         return loss.item()
 
-    def dq_learning(self, n_episodes: int, batch_size: int = 32, c: int = 10_000, replay_start_size: int = 50_000,
+    def start_training(self, n_episodes: int, batch_size: int = 32, target_update_freq: int = 10_000, replay_start_size: int = 50_000,
                     max_steps: int = MAX_STEPS, wandb_run=None, video_dir=None, checkpoint_dir=None, patience: int = PATIENCE):
 
         early_stopping = self.initialize_early_stopping(
@@ -169,6 +169,7 @@ class DQN(RLAgent, nn.Module):
         processed_frames = 0
         curr_loss = 0
         avg_playtime = 0
+        prev_counter = 0
 
         with tqdm(range(n_episodes)) as pg_bar:
             for episode in pg_bar:
@@ -216,7 +217,7 @@ class DQN(RLAgent, nn.Module):
                         self.eps_schedule(processed_frames)
 
                     # reset Q^ = Q
-                    if processed_frames % c == 0:
+                    if processed_frames % target_update_freq == 0:
                         target_q_network.load_state_dict(self.state_dict())
 
                     if done:

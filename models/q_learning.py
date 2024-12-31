@@ -43,7 +43,7 @@ class QLearning(RLAgent):
             return instance, model_state
         return instance
 
-    def train(self, n_episodes: int, max_steps: int = MAX_STEPS, patience: int = PATIENCE, wandb_run=None, video_dir=None, checkpoint_dir=None):
+    def start_training(self, n_episodes: int, max_steps: int = MAX_STEPS, patience: int = PATIENCE, wandb_run=None, video_dir=None, checkpoint_dir=None):
         total_steps = 0
 
         early_stopping = self.initialize_early_stopping(

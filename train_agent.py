@@ -73,14 +73,24 @@ def train(args):
     video_dir = os.path.join(experiment_dir, f"video/")
     os.makedirs(video_dir, exist_ok=True)
     agent.env = RecordVideo(agent.env, episode_trigger=episode_trigger, video_folder=video_dir, name_prefix=f"video_{agent_name}")
+    train_args = {
+        "n_episodes": args.n_episodes,
+        "max_steps": args.n_steps,
+        "wandb_run": run,
+        "video_dir": video_dir,
+        "checkpoint_dir": experiment_dir,
+        "patience": args.patience
+    }
 
     if agent_name == "DQN":
-        agent.dq_learning(n_episodes=args.n_episodes, batch_size=args.batch_size,
-                          replay_start_size=args.replay_start_size, max_steps=args.n_steps, wandb_run=run,
-                          video_dir=video_dir, checkpoint_dir=experiment_dir, patience=args.patience)
-    elif agent_name == "QLearning":
-        agent.train(n_episodes=args.n_episodes, max_steps=args.n_steps, wandb_run=run, video_dir=video_dir,
-                    checkpoint_dir=experiment_dir, patience=args.patience)
+        train_args.update({
+            'batch_size': args.batch_size,
+            'replay_start_size': args.replay_start_size, 
+            'target_update_freq': args.target_update_freq
+
+        })
+        
+    agent.start_training(**train_args)
 
     if not args.no_log_to_wandb:
         run.finish()
