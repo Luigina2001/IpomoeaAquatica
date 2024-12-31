@@ -147,10 +147,6 @@ class DQN(RLAgent, nn.Module):
         self.optimizer.zero_grad()
         loss.backward()
 
-        for param in self.parameters():
-            # clip gradients for training stability
-            param.grad.data.clamp_(-1, 1)
-
         self.optimizer.step()
 
         return loss.item()
