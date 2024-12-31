@@ -39,7 +39,7 @@ def test(args):
     agent = getattr(models, args.agent).load_model(env, args.checkpoint_path)
 
     if args.agent == "DQN":
-        device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps_is_available() else "cpu"))
+        device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
         agent.to(device)
 
     total_rewards = []
