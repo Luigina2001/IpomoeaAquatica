@@ -232,11 +232,11 @@ class DQN(RLAgent, nn.Module):
                 self.log_results(wandb_run, {"avg_loss": avg_loss / T, "avg_reward": score / T,
                                              "game_score": score})
 
-                if self.env.unwrapped.has_wrapper_attr("recorded_frames"):
+                if processed_frames >= replay_start_size and self.env.unwrapped.has_wrapper_attr("recorded_frames"):
                     avg_playtime += len(
                         self.env.unwrapped.get_wrapper_attr("recorded_frames"))
 
-                if self.handle_early_stopping(
+                if processed_frames >= replay_start_size and self.handle_early_stopping(
                         early_stopping=early_stopping, reward=score, agent=self, episode=episode,
                         video_path=video_path):
                     break
