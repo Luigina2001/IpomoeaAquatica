@@ -1,9 +1,10 @@
+import os
+import torch
+import ale_py
 import argparse
+import os.path as osp
 
 import gymnasium as gym
-import ale_py
-import os
-import os.path as osp
 
 from gymnasium.wrappers import RecordVideo
 
@@ -36,6 +37,10 @@ def test(args):
     env = RecordVideo(env, video_folder=video_dir, name_prefix=f"video_{args.agent}_test")
 
     agent = getattr(models, args.agent).load_model(env, args.checkpoint_path)
+
+    if args.agent == "DQN":
+        device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps_is_available() else "cpu"))
+        agent.to(device)
 
     total_rewards = []
     total_scores = []

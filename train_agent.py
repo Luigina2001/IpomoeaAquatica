@@ -1,6 +1,7 @@
 import os
 import time
 import yaml
+import torch
 import wandb
 import models
 import ale_py
@@ -89,6 +90,10 @@ def train(args):
             'target_update_freq': args.target_update_freq
 
         })
+
+        device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps_is_available() else "cpu"))
+        agent.to(device)
+
         
     agent.start_training(**train_args)
 
