@@ -66,8 +66,9 @@ def train(args):
     if args.tune_hyperparameters:
         agent_parameters["lr"] = wandb.config['lr']
         agent_parameters["gamma"] = wandb.config['gamma']
+        agent_parameters["eps_start"] = wandb.config['eps_start']
 
-    agent = getattr(models, args.agent)(**agent_parameters, memory_capacity=args.memory_capacity)
+    agent = getattr(models, args.agent)(**agent_parameters)
 
     video_dir = os.path.join(experiment_dir, f"video/")
     os.makedirs(video_dir, exist_ok=True)

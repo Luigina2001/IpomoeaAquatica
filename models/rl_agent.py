@@ -3,6 +3,7 @@ import os
 import pickle
 from collections import defaultdict
 
+import cv2
 import numpy as np
 import os.path as osp
 
@@ -35,6 +36,7 @@ class RLAgent:
 
     def encode_state(self, state):
         frame, _ = state
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         return hashlib.sha256(frame.tobytes()).hexdigest()
 
     def close_environment(self):

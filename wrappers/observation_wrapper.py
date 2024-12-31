@@ -1,11 +1,9 @@
 import numpy as np
 from gymnasium import ObservationWrapper
 
-from utils.constants import INVADERS_TOTAL_HEIGHT, INVADERS_TOTAL_WIDTH, INVADER_ROW_SEPARATION_WIDTH, PROJECTILE_COLOR
+from utils.constants import INVADERS_TOTAL_HEIGHT, INVADERS_TOTAL_WIDTH, INVADER_ROW_SEPARATION_WIDTH
 from utils.functions import (
-    get_element_pos,
     determine_bounding_box,
-    get_frame,
     calculate_frame_difference,
     get_shields,
     get_mothership_pos,
@@ -20,7 +18,7 @@ class Observation(ObservationWrapper):
 
         self.player_pos = None 
         self.prev_frame = None
-        self.bullet_pos = None
+        # self.bullet_pos = None
         self.did_agent_shoot = False
         self.shields_hit = False
         self.invaders_pos = None
@@ -78,7 +76,7 @@ class Observation(ObservationWrapper):
                     self.shields_hit = np.any(diff)
 
             if self.shields_hit:
-                self.shields_hit_by = self._determine_shields_hit_source(curr_frame)
+                self.shields_hit_by = self._determine_shields_hit_source()
             else:
                 self.shields_hit_by = None
 
@@ -99,10 +97,11 @@ class Observation(ObservationWrapper):
                      "invaders_pos": self.invaders_pos,
                      "mothership_pos": self.mothership_pos,
                      "invaders_matrix": self.invaders_matrix,
-                     "bullet_pos": self.bullet_pos,
+                     # "bullet_pos": self.bullet_pos,
                      "lives": self.env.unwrapped.ale.lives()})
         
         if isinstance(obs, tuple):
+            obs = list(obs)
             obs[-1] = info
             obs = tuple(obs)
         else:
@@ -112,15 +111,17 @@ class Observation(ObservationWrapper):
         self.prev_shields_pos = self.curr_shields_pos
 
         if self.env.has_wrapper_attr('update_reward_info'):
-            self.env.get_wrapper_attr('update_reward_info')(self.shields_hit_by, self.player_pos, self.invaders_pos, self.curr_shields_pos, self.invaders_matrix)
+            self.env.get_wrapper_attr('update_reward_info')(self.shields_hit_by,
+                                                            self.player_pos, self.invaders_pos,
+                                                            self.curr_shields_pos, self.invaders_matrix)
 
         return obs
 
-    def _determine_shields_hit_source(self, curr_frame,):
+    def _determine_shields_hit_source(self):
         """
         Determines who hit the shield: player or invaders, based on player position and shield hit event.
         """
-        _, shield_cols = self.shields_pos
+        _, shield_cols = self.curr_shields_pos
         _, player_col_min = np.min(self.player_pos[0]), np.min(self.player_pos[1])
         player_col_max = np.max(self.player_pos[1])
 
@@ -132,21 +133,23 @@ class Observation(ObservationWrapper):
 
         # Determine the source of the hit
         if self.did_agent_shoot and is_under_shield:
-            self.bullet_pos = get_element_pos(curr_frame, PROJECTILE_COLOR)
+            '''self.bullet_pos = get_element_pos(curr_frame, PROJECTILE_COLOR)
 
-            # Check if projectile_positions_current has enough elements before accessing index 1
+            #  Check if projectile_positions_current has enough elements before accessing index 1
             if (self.bullet_pos is None) or (self.bullet_pos[1].size == 0):
                 return 'player'
             else:
-                projectile_columns = self.bullet_pos[1]
-                prev_shield_columns = set(self.prev_shields_pos[1])
-                common_columns = list(set(projectile_columns.tolist()) & prev_shield_columns)
+            projectile_columns = self.bullet_pos[1]
+            prev_shield_columns = set(self.prev_shields_pos[1])
+            common_columns = list(set(projectile_columns.tolist()) & prev_shield_columns)
 
-                if common_columns:
-                    self.did_agent_shoot = False
-                    return 'player'
-                else:
-                    return 'invader'
+            if common_columns:
+                self.did_agent_shoot = False
+                return 'player'
+            else:
+                return 'invader'''''
+
+            return 'player'
 
         else:
             return 'invader'
