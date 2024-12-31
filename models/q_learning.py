@@ -102,9 +102,8 @@ class QLearning(RLAgent):
                         action_values, feature_range=(0, 1))
                     avg_q_value = np.mean(normalized_q_values)
 
-                if self.env.unwrapped.has_wrapper_attr("recorded_frames"):
-                    avg_playtime += len(
-                        self.env.unwrapped.get_wrapper_attr("recorded_frames"))
+                if self.env.has_wrapper_attr("recorded_frames") :
+                    avg_playtime += len(self.env.get_wrapper_attr("recorded_frames"))
 
                 self.log_results(wandb_run, {
                     "Average Q-Value": avg_q_value,
