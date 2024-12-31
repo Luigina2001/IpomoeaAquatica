@@ -71,8 +71,7 @@ class QLearning(RLAgent):
 
                 for _ in range(max_steps):
                     action = self.policy(state)
-                    next_state, reward_info, truncated, terminated, info = self.env.step(
-                        action)
+                    next_state, reward_info, truncated, terminated, info = self.env.step(action)
                     total_steps += 1
                     cumulative_reward += reward_info['reward']
 
