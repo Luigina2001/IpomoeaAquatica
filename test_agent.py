@@ -86,8 +86,6 @@ def argument_parser():
     parser.add_argument("--checkpoint_path", type=str, default=None)
     parser.add_argument("--agent", type=str, default="DQN",
                         choices=["QLearning", "DQN"])
-    parser.add_argument("--every_visit", action="store_true", default=False,
-                        help="Boolean to discern between first-visit and every-visit Monte Carlo methods")
 
     return parser
 

@@ -151,7 +151,7 @@ class DQN(RLAgent, nn.Module):
 
         return loss.item()
 
-    def start_training(self, n_episodes: int, batch_size: int = 32, target_update_freq: int = 10_000,
+    def train_step(self, n_episodes: int, batch_size: int = 32, target_update_freq: int = 10_000,
                        replay_start_size: int = 50_000,
                        max_steps: int = MAX_STEPS, wandb_run=None, video_dir=None, checkpoint_dir=None,
                        patience: int = PATIENCE):

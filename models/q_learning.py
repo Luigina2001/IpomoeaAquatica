@@ -1,17 +1,28 @@
+import hashlib
 import os
+from collections import defaultdict
+
+import cv2
 import numpy as np
 import os.path as osp
 from tqdm import tqdm
 
+from utils.functions import initialize_early_stopping, handle_video, handle_early_stopping, log_results
 from .rl_agent import RLAgent
 from utils.constants import PATIENCE, MAX_STEPS
 from wrappers import Action, Observation, Reward
 from sklearn.preprocessing import minmax_scale
 
 
+def init_q_table():
+    return 1
+
+
 class QLearning(RLAgent):
     def __init__(self, env, lr, gamma, eps_start, eps_end, decay_steps, *args, **kwargs):
         super().__init__(env, lr, gamma, eps_start, eps_end, decay_steps, *args, **kwargs)
+
+        self.q_table = defaultdict(init_q_table)
 
         self.initialize_env()
 
@@ -33,6 +44,35 @@ class QLearning(RLAgent):
 
         return model_state
 
+    def policy(self, state):
+        if self.env is None:
+            raise ValueError(
+                "Environment not set. Please set the environment before calling the policy method.")
+
+        if self.train_mode and np.random.uniform(0, 1) < self.eps:
+            # Exploration
+            return int(self.env.action_space.sample())
+
+        # Exploitation
+        max_q = float("-inf")
+        best_action = None
+        encoded_state = self.encode_state(state)
+        for action in range(self.env.action_space.n):
+            if (encoded_state, action) in self.q_table:
+                if self.q_table[(encoded_state, action)] > max_q:
+                    max_q = self.q_table[(encoded_state, action)]
+                    best_action = action
+
+        if max_q != float("-inf"):
+            if best_action == 0:
+                self.count_noop += 1
+            if self.count_noop == 10:
+                self.count_noop = 0
+                best_action = np.random.choice([1, 2, 3, 4, 5])
+            return int(best_action)
+
+        return int(np.random.choice([1, 2, 3, 4, 5]))
+
     @classmethod
     def load_model(cls, env, checkpoint_path: str, return_params: bool = False):
         instance, model_state = super().load_model(env, checkpoint_path, True)
@@ -43,36 +83,27 @@ class QLearning(RLAgent):
             return instance, model_state
         return instance
 
-    def start_training(self, n_episodes: int, max_steps: int = MAX_STEPS, patience: int = PATIENCE, wandb_run=None,
-                       video_dir=None, checkpoint_dir=None):
-        total_steps = 0
+    def encode_state(self, state):
+        frame, _ = state
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return hashlib.sha256(frame.tobytes()).hexdigest()
 
-        early_stopping = self.initialize_early_stopping(checkpoint_dir, patience)
+    def train_step(self, n_episodes: int, var_threshold: float, val_every_ep: int, max_steps: int = MAX_STEPS,
+                   patience: int = PATIENCE, wandb_run=None, video_dir=None, checkpoint_dir=None):
 
         avg_playtime = 0
-        prev_counter = 0
-        video_path = None
+        total_steps = 0
+        cumulative_rewards = []
 
         with tqdm(range(n_episodes)) as pg_bar:
             for episode in pg_bar:
-
-                state, _ = self.reset_environment()
+                state, _ = self.env.reset()
                 cumulative_reward = 0
                 action_values = []
-
-                if prev_counter < early_stopping.counter:
-                    if video_path and osp.exists(video_path):
-                        os.remove(video_path)
-
-                video_path = self.handle_video(
-                    video_dir, episode, prefix="QLearning")
-
-                prev_counter = early_stopping.counter
 
                 for _ in range(max_steps):
                     action = self.policy(state)
                     next_state, reward_info, truncated, terminated, info = self.env.step(action)
-                    total_steps += 1
                     cumulative_reward += reward_info['reward']
 
                     self.eps_schedule(total_steps)
@@ -96,7 +127,9 @@ class QLearning(RLAgent):
                     state = next_state
 
                     pg_bar.set_description(
-                        f"Episode: {episode}, Step: {_}, Cumulative Reward: {cumulative_reward}, Current Score: {reward_info['score']}")
+                        f"Episode: {episode + 1}, Step: {_}, Cumulative Reward: {cumulative_reward}, Current Score: {reward_info['score']}")
+
+                total_steps += _
 
                 if action_values:
                     normalized_q_values = minmax_scale(
@@ -106,19 +139,34 @@ class QLearning(RLAgent):
                 if self.env.has_wrapper_attr("recorded_frames"):
                     avg_playtime += len(self.env.get_wrapper_attr("recorded_frames"))
 
-                self.log_results(wandb_run, {
+                episode_data = {
                     "Average Q-Value": avg_q_value,
                     "Cumulative Reward": cumulative_reward,
                     "Game Score": reward_info['score']
-                })
+                }
 
-                if self.handle_early_stopping(
-                        early_stopping=early_stopping, reward=cumulative_reward, agent=self, episode=episode,
-                        video_path=video_path):
-                    break
+                if (episode + 1) % val_every_ep == 0:
+                    cumulative_rewards.append(cumulative_reward)
+
+                    if len(cumulative_rewards) > 1:
+                        variance = np.var(cumulative_rewards)
+                        print(f"\n=========\nVariance over last {val_every_ep} episodes: {variance}\n=========")
+                        episode_data.update({f"Performance variance over {val_every_ep} episodes": variance})
+
+                        if np.var(cumulative_rewards) <= var_threshold:
+                            print(f"\n=========\nQLearning agent reached convergence! Total steps needed: {total_steps}\n=========")
+                            episode_data.update({"Convergence steps": total_steps})
+                            log_results(wandb_run, episode_data)
+                            break
+
+                log_results(wandb_run, episode_data)
+
+            checkpoint_path = os.path.join(checkpoint_dir, f"QLearning_ep_{episode}.pkl")
+            print(f"Saving model to {checkpoint_path}")
+            self.save_model(checkpoint_path)
+            print("Model saved successfully!")
 
             if video_dir and avg_playtime > 0:
-                self.log_results(
-                    wandb_run, {"Playtime": avg_playtime // n_episodes})
+                log_results(wandb_run, {"Playtime": avg_playtime // n_episodes})
 
-            self.close_environment()
+            self.env.close()

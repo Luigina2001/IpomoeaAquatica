@@ -73,30 +73,39 @@ def train(args):
 
     video_dir = os.path.join(experiment_dir, f"video/")
     os.makedirs(video_dir, exist_ok=True)
-    agent.env = RecordVideo(agent.env, episode_trigger=episode_trigger, video_folder=video_dir,
-                            name_prefix=f"video_{agent_name}")
+
+    episode_trigger_func = episode_trigger
+
+    if agent_name != "DQN":
+        episode_trigger_func = lambda t: t % 100 == 0
+
+    agent.env = RecordVideo(agent.env, episode_trigger=episode_trigger_func, video_folder=video_dir, name_prefix=f"video_{agent_name}")
     train_args = {
         "n_episodes": args.n_episodes,
         "max_steps": args.n_steps,
         "wandb_run": run,
         "video_dir": video_dir,
         "checkpoint_dir": experiment_dir,
-        "patience": args.patience
+        "patience": args.patience,
+        "val_every_ep": args.val_every_ep
     }
 
-    if agent_name == "DQN":
+    if agent_name == "QLearning":
+        train_args.update({
+            'var_threshold': args.var_threshold
+        })
+    elif agent_name == "DQN":
         train_args.update({
             'batch_size': args.batch_size,
-            'replay_start_size': args.replay_start_size,
+            'replay_start_size': args.replay_start_size, 
             'target_update_freq': args.target_update_freq
-
         })
 
-        device = torch.device(
-            "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
+        device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
         agent.to(device)
 
-    agent.start_training(**train_args)
+        
+    agent.train_step(**train_args)
 
     if not args.no_log_to_wandb:
         run.finish()
@@ -129,6 +138,8 @@ def argument_parser():
     parser.add_argument('--gamma', default=0.99,
                         type=float, help='Discounting Factor')
     parser.add_argument("--n_episodes", type=int, default=N_EPISODES)
+    parser.add_argument("--val_every_ep", type=int, default=100)
+    parser.add_argument("--var_threshold", type=float, default=100)
     parser.add_argument("--n_steps", type=int, default=N_STEPS,
                         help="Max number of steps per episode")
     parser.add_argument("--patience", type=int,
