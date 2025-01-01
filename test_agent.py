@@ -41,6 +41,9 @@ def test(args):
     if args.agent == "DQN":
         device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
         agent.to(device)
+        agent.eval()
+    else:
+        agent.evaluation_mode()
 
     total_rewards = []
     total_scores = []
@@ -64,6 +67,9 @@ def test(args):
 
             cumulative_reward += reward
             current_state = next_state
+
+        if args.agent == "DQN":
+            score = cumulative_reward
 
         print(f"Episode {episode + 1}: Total Reward: {cumulative_reward} --- Game Score: {score}")
         total_rewards.append(cumulative_reward)
