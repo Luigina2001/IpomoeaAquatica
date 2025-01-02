@@ -183,6 +183,8 @@ def argument_parser():
                         help="Capacity of the replay memory")
     parser.add_argument("--replay_start_size", type=int, default=50_000,
                         help="Number of processed frames before learning")
+    parser.add_argument("--held_out_ratio", type=float, default=0.1,
+                        help="Probability of putting a state into the hold-out set in the DQN class")
 
     return parser
 

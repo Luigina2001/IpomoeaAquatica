@@ -20,14 +20,24 @@ Transition = namedtuple(
 
 
 class ReplayMemory:
-    def __init__(self, capacity):
+    def __init__(self, capacity, held_out_ratio):
         self.memory = deque([], maxlen=capacity)
+        self.held_out_memory = []
+        self.held_out_ratio = held_out_ratio
 
     def push(self, *args):
-        self.memory.append(Transition(*args))
+        if random.random() < self.held_out_ratio:
+            self.held_out_memory.append(Transition(*args))
+        else:
+            self.memory.append(Transition(*args))
 
     def sample(self, batch_size):
         return random.sample(self.memory, batch_size)
+
+    def sample_held_out(self, batch_size=None):
+        if batch_size is None:
+            return self.held_out_memory
+        return random.sample(self.held_out_memory, min(batch_size, len(self.held_out_memory)))
 
     def __len__(self):
         return len(self.memory)
@@ -36,8 +46,8 @@ class ReplayMemory:
 class DQN(RLAgent, nn.Module):
     def __init__(self, env, n_channels: int = 1, n_actions: int = 6, gamma: int = 0.99, eps_start: int = 1,
                  eps_end: int = 0.01,
-                 decay_steps: int = 1_000_000, memory_capacity: int = 1_000_000, lr: int = 0.000025,
-                 frame_skip: int = 3, noop_max: int = 30):
+                 decay_steps: int = 1_000_000, memory_capacity: int = 1_000_000, held_out_ratio=0.1,
+                 lr: int = 0.000025, frame_skip: int = 3, noop_max: int = 30):
         RLAgent.__init__(self, env, lr, gamma, eps_start, eps_end, decay_steps)
         nn.Module.__init__(self)
 
@@ -73,7 +83,7 @@ class DQN(RLAgent, nn.Module):
         self.fc1 = nn.Linear(64 * 7 * 7, 512)
         self.out_layer = nn.Linear(512, self.n_actions)
 
-        self.replay_memory = ReplayMemory(memory_capacity)
+        self.replay_memory = ReplayMemory(memory_capacity, held_out_ratio)
         self.optimizer = optim.Adam(self.parameters(), lr=self.lr)
 
         self.initialize_env(frame_skip=self.frame_skip, noop_max=self.noop_max)
@@ -128,7 +138,8 @@ class DQN(RLAgent, nn.Module):
         non_final_mask = torch.tensor(
             tuple(map(lambda s: s is not None, batch.next_state)), dtype=torch.bool).to(self.dummy_param.device)
         non_final_next_states = torch.stack(
-            [torch.from_numpy(s) for s in batch.next_state if s is not None]).to(dtype=torch.float32).to(self.dummy_param.device)
+            [torch.from_numpy(s) for s in batch.next_state if s is not None]).to(dtype=torch.float32).to(
+            self.dummy_param.device)
         non_final_next_states = non_final_next_states.unsqueeze(1)
 
         action_distribution = self(state_batch)
@@ -151,10 +162,25 @@ class DQN(RLAgent, nn.Module):
 
         return loss.item()
 
+    def calculate_avg_q_value(self):
+        if not self.replay_memory.held_out_memory:
+            raise ValueError("Held-out set is empty!")
+
+        with torch.no_grad():
+            transitions = self.replay_memory.sample_held_out()  # held-out set states
+            states = torch.stack([torch.tensor(t.state, dtype=torch.float32) for t in transitions])
+            states = states.unsqueeze(1).to(self.dummy_param.device)
+
+            q_values = self.forward(states)
+
+            avg_q_value = q_values.mean().item()
+
+        return avg_q_value
+
     def train_step(self, n_episodes: int, batch_size: int = 32, target_update_freq: int = 10_000,
-                       replay_start_size: int = 50_000,
-                       max_steps: int = MAX_STEPS, wandb_run=None, video_dir=None, checkpoint_dir=None,
-                       patience: int = PATIENCE):
+                   replay_start_size: int = 50_000,
+                   max_steps: int = MAX_STEPS, wandb_run=None, video_dir=None, checkpoint_dir=None,
+                   patience: int = PATIENCE):
 
         early_stopping = self.initialize_early_stopping(
             checkpoint_dir, patience)
@@ -217,6 +243,11 @@ class DQN(RLAgent, nn.Module):
 
                     # reset Q^ = Q
                     if processed_frames % target_update_freq == 0:
+                        avg_q_value = self.calculate_avg_q_value()
+                        pg_bar.set_description(
+                            f"Episode: {episode}, Avg Q (held-out): {avg_q_value:.2f}, Processed Frames: {processed_frames}"
+                        )
+                        self.log_results(wandb_run, {"avg_q_held_out": avg_q_value})
                         target_q_network.load_state_dict(self.state_dict())
 
                     if done:
