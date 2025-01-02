@@ -11,6 +11,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from .rl_agent import RLAgent
 from utils.constants import PATIENCE, MAX_STEPS
+from utils.functions import initialize_early_stopping, handle_early_stopping, handle_video, log_results
 
 from gymnasium.wrappers import AtariPreprocessing
 from collections import namedtuple, deque
@@ -89,7 +90,6 @@ class DQN(RLAgent, nn.Module):
         self.initialize_env(frame_skip=self.frame_skip, noop_max=self.noop_max)
 
         del self.train_mode
-        del self.q_table
 
     def policy(self, state):
         if self.training and np.random.uniform(0, 1) < self.eps:
@@ -177,13 +177,11 @@ class DQN(RLAgent, nn.Module):
 
         return avg_q_value
 
-    def train_step(self, n_episodes: int, batch_size: int = 32, target_update_freq: int = 10_000,
-                   replay_start_size: int = 50_000,
-                   max_steps: int = MAX_STEPS, wandb_run=None, video_dir=None, checkpoint_dir=None,
-                   patience: int = PATIENCE):
+    def train_step(self, n_episodes: int, val_every_ep: int, batch_size: int = 32, target_update_freq: int = 10_000,
+                   replay_start_size: int = 50_000, max_steps: int = MAX_STEPS, wandb_run=None, video_dir=None,
+                   checkpoint_dir=None, patience: int = PATIENCE):
 
-        early_stopping = self.initialize_early_stopping(
-            checkpoint_dir, patience)
+        early_stopping = initialize_early_stopping(checkpoint_dir, patience)
 
         target_q_network = DQN(
             env=self.env, n_channels=self.n_channels, n_actions=self.n_actions)
@@ -199,7 +197,7 @@ class DQN(RLAgent, nn.Module):
         with tqdm(range(n_episodes)) as pg_bar:
             for episode in pg_bar:
 
-                state, _ = self.reset_environment()
+                state, _ = self.env.reset()
                 avg_loss = 0.0
                 score = 0.0  # it is the same as the game score
 
@@ -207,8 +205,10 @@ class DQN(RLAgent, nn.Module):
                     if video_path and osp.exists(video_path):
                         os.remove(video_path)
 
-                video_path = self.handle_video(
-                    video_dir, episode, prefix="DQN")
+                if episode > 1 and episode % val_every_ep == 0:
+                    self.eval()
+
+                video_path = handle_video(video_dir, episode, prefix="DQN")
 
                 prev_counter = early_stopping.counter
 
@@ -233,8 +233,7 @@ class DQN(RLAgent, nn.Module):
                     # before learning starts
                     processed_frames += 1
                     if processed_frames >= replay_start_size:
-                        curr_loss = self.optimize_model(
-                            target_q_network, batch_size)
+                        curr_loss = self.optimize_model(target_q_network, batch_size)
                         avg_loss += curr_loss
 
                     # linearly decay eps
@@ -247,7 +246,7 @@ class DQN(RLAgent, nn.Module):
                         pg_bar.set_description(
                             f"Episode: {episode}, Avg Q (held-out): {avg_q_value:.2f}, Processed Frames: {processed_frames}"
                         )
-                        self.log_results(wandb_run, {"avg_q_held_out": avg_q_value})
+                        log_results(wandb_run, {"avg_q_held_out": avg_q_value})
                         target_q_network.load_state_dict(self.state_dict())
 
                     if done:
@@ -258,25 +257,23 @@ class DQN(RLAgent, nn.Module):
                     pg_bar.set_description(
                         f"Episode: {episode}, Processed Frames: {processed_frames}, Step: {T}, Current Loss: {curr_loss:.2f}, Current Score: {score}")
 
-                self.rewards_per_episode.append(score)
+                log_results(wandb_run, {"avg_loss": avg_loss / T, "avg_reward": score / T,
+                                        "game_score": score})
 
-                self.log_results(wandb_run, {"avg_loss": avg_loss / T, "avg_reward": score / T,
-                                             "game_score": score})
+                if processed_frames >= replay_start_size and self.env.has_wrapper_attr("recorded_frames"):
+                    avg_playtime += len(self.env.get_wrapper_attr("recorded_frames"))
 
-                if processed_frames >= replay_start_size and self.env.unwrapped.has_wrapper_attr("recorded_frames"):
-                    avg_playtime += len(
-                        self.env.unwrapped.get_wrapper_attr("recorded_frames"))
-
-                if processed_frames >= replay_start_size and self.handle_early_stopping(
-                        early_stopping=early_stopping, reward=score, agent=self, episode=episode,
-                        video_path=video_path):
-                    break
+                if processed_frames >= replay_start_size and episode > 1 and episode % val_every_ep == 0:
+                    if handle_early_stopping(early_stopping=early_stopping, reward=score, agent=self,
+                                             episode=episode,
+                                             video_path=video_path):
+                        break
+                    self.train()
 
             if video_dir and avg_playtime > 0:
-                self.log_results(
-                    wandb_run, {"Playtime": avg_playtime // n_episodes})
+                log_results(wandb_run, {"Playtime": avg_playtime // n_episodes})
 
-            self.close_environment()
+            self.env.close()
 
     def initialize_env(self, frame_skip, noop_max):
         # disable frame skipping in original env if enabled
