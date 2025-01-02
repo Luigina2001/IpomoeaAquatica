@@ -50,6 +50,9 @@ def train(args):
 
     env = gym.make("ALE/SpaceInvaders-v5", render_mode="rgb_array")
 
+    video_dir = os.path.join(experiment_dir, f"video/")
+    os.makedirs(video_dir, exist_ok=True)
+
     agent_parameters = {
         "env": env,
         "lr": args.lr,
@@ -59,9 +62,33 @@ def train(args):
         "decay_steps": args.decay_steps
     }
 
-    if agent_name == "DQN":
+    train_args = {
+        "n_episodes": args.n_episodes,
+        "max_steps": args.n_steps,
+        "wandb_run": run,
+        "video_dir": video_dir,
+        "checkpoint_dir": experiment_dir,
+        "val_every_ep": args.val_every_ep
+    }
+
+    if agent_name == "QLearning":
+        agent_parameters.update({
+            'normalize_reward': args.normalize_reward
+        })
+
+        train_args.update({
+            'var_threshold': args.var_threshold,
+        })
+    elif agent_name == "DQN":
         agent_parameters.update({
             "memory_capacity": args.memory_capacity
+        })
+
+        train_args.update({
+            'batch_size': args.batch_size,
+            'patience': args.patience,
+            'replay_start_size': args.replay_start_size,
+            'target_update_freq': args.target_update_freq
         })
 
     if args.tune_hyperparameters:
@@ -71,40 +98,19 @@ def train(args):
 
     agent = getattr(models, args.agent)(**agent_parameters)
 
-    video_dir = os.path.join(experiment_dir, f"video/")
-    os.makedirs(video_dir, exist_ok=True)
-
     episode_trigger_func = episode_trigger
 
     if agent_name != "DQN":
         episode_trigger_func = lambda t: t % 100 == 0
 
-    agent.env = RecordVideo(agent.env, episode_trigger=episode_trigger_func, video_folder=video_dir, name_prefix=f"video_{agent_name}")
-    train_args = {
-        "n_episodes": args.n_episodes,
-        "max_steps": args.n_steps,
-        "wandb_run": run,
-        "video_dir": video_dir,
-        "checkpoint_dir": experiment_dir,
-        "patience": args.patience,
-        "val_every_ep": args.val_every_ep
-    }
+    agent.env = RecordVideo(agent.env, episode_trigger=episode_trigger_func, video_folder=video_dir,
+                            name_prefix=f"video_{agent_name}")
 
-    if agent_name == "QLearning":
-        train_args.update({
-            'var_threshold': args.var_threshold
-        })
-    elif agent_name == "DQN":
-        train_args.update({
-            'batch_size': args.batch_size,
-            'replay_start_size': args.replay_start_size, 
-            'target_update_freq': args.target_update_freq
-        })
-
-        device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
+    if agent_name == "DQN":
+        device = torch.device(
+            "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
         agent.to(device)
 
-        
     agent.train_step(**train_args)
 
     if not args.no_log_to_wandb:

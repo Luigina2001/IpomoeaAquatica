@@ -34,12 +34,13 @@ def test(args):
 
     video_dir = os.path.join(evaluation_dir, f"video/")
     os.makedirs(video_dir, exist_ok=True)
-    env = RecordVideo(env, video_folder=video_dir, name_prefix=f"video_{args.agent}_test")
 
     agent = getattr(models, args.agent).load_model(env, args.checkpoint_path)
+    agent.env = RecordVideo(agent.env, video_folder=video_dir, name_prefix=f"video_{args.agent}_test")
 
     if args.agent == "DQN":
-        device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
+        device = torch.device(
+            "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
         agent.to(device)
         agent.eval()
     else:
@@ -47,13 +48,16 @@ def test(args):
 
     total_rewards = []
     total_scores = []
+    avg_playtime = 0
+    total_steps = 0
     for episode in range(args.n_episodes):
         done = False
         current_state, _ = agent.env.reset()
         cumulative_reward = 0
         reward = 0
         score = 0
-        while not done:
+        steps = 0
+        while not done and steps < args.n_steps:
             action = agent.policy(current_state)
             next_state, score_info, terminated, truncated, _ = agent.env.step(action)
             done = terminated or truncated
@@ -67,6 +71,12 @@ def test(args):
 
             cumulative_reward += reward
             current_state = next_state
+            steps += 1
+
+        total_steps += steps
+
+        if agent.env.recorded_frames:
+            avg_playtime += len(agent.env.recorded_frames)
 
         if args.agent == "DQN":
             score = cumulative_reward
@@ -75,8 +85,12 @@ def test(args):
         total_rewards.append(cumulative_reward)
         total_scores.append(score)
 
+        avg_playtime /= args.n_episodes
+
     print(f"Average Reward: {sum(total_rewards) / len(total_rewards)}")
-    print(f"Average Game Score: {sum(total_scores) / (args.n_episodes)}")
+    print(f"Average Game Score: {sum(total_scores) / args.n_episodes}")
+    print(f"Average Playtime: {avg_playtime}")
+    print(f"Steps: {total_steps}")
 
 
 def argument_parser():

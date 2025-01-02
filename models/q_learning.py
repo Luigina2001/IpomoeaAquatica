@@ -19,10 +19,11 @@ def init_q_table():
 
 
 class QLearning(RLAgent):
-    def __init__(self, env, lr, gamma, eps_start, eps_end, decay_steps, *args, **kwargs):
+    def __init__(self, env, lr, gamma, eps_start, eps_end, decay_steps, normalize_reward: bool = False, *args, **kwargs):
         super().__init__(env, lr, gamma, eps_start, eps_end, decay_steps, *args, **kwargs)
 
         self.q_table = defaultdict(init_q_table)
+        self.normalize_reward = normalize_reward
 
         self.initialize_env()
 
@@ -31,7 +32,7 @@ class QLearning(RLAgent):
         if self.env.unwrapped._frameskip > 1:
             self.env.unwrapped._frameskip = 3
 
-        self.env = Reward(self.env)
+        self.env = Reward(self.env, normalize_reward=self.normalize_reward)
         self.env = Observation(self.env)
         self.env = Action(self.env)
 
@@ -39,7 +40,7 @@ class QLearning(RLAgent):
         model_state = super().serialize()
 
         model_state.update({
-            'extra_parameters': {'q_table': self.q_table}
+            'extra_parameters': {'q_table': self.q_table, 'normalize_reward': self.normalize_reward}
         })
 
         return model_state
@@ -57,6 +58,7 @@ class QLearning(RLAgent):
         max_q = float("-inf")
         best_action = None
         encoded_state = self.encode_state(state)
+
         for action in range(self.env.action_space.n):
             if (encoded_state, action) in self.q_table:
                 if self.q_table[(encoded_state, action)] > max_q:
@@ -78,6 +80,7 @@ class QLearning(RLAgent):
         instance, model_state = super().load_model(env, checkpoint_path, True)
 
         instance.q_table = model_state["extra_parameters"]["q_table"]
+        instance.normalize_reward = model_state["extra_parameters"]["normalize_reward"]
 
         if return_params:
             return instance, model_state
