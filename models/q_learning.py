@@ -47,8 +47,7 @@ class QLearning(RLAgent):
 
     def policy(self, state):
         if self.env is None:
-            raise ValueError(
-                "Environment not set. Please set the environment before calling the policy method.")
+            raise ValueError("Environment not set. Please set the environment before calling the policy method.")
 
         if self.train_mode and np.random.uniform(0, 1) < self.eps:
             # Exploration

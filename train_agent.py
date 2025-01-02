@@ -17,10 +17,6 @@ from utils.constants import N_EPISODES, N_STEPS, PATIENCE
 gym.register_envs(ale_py)
 
 
-def episode_trigger(t):
-    return True
-
-
 def train(args):
     seed_everything(args.seed)
 
@@ -37,11 +33,10 @@ def train(args):
             api_key = f.read().strip()
         wandb.login(key=api_key)
 
-        run_name = args.run_name if args.run_name else agent_name.lower()
-        run = wandb.init(entity=args.entity,
-                         project=args.project, name=run_name)
-        experiment_dir = str(
-            osp.join(experiment_dir if experiment_dir else args.experiment_dir, run.id))
+        run_name = args.run_name if args.run_name else (agent_name.lower() if args.no_log_to_wandb else None)
+        run = wandb.init(entity=args.entity, project=args.project, name=run_name)
+        run.name = agent_name + "-" + run.name
+        experiment_dir = str(osp.join(experiment_dir if experiment_dir else args.experiment_dir, run.id))
     else:
         experiment_dir = str(
             osp.join(experiment_dir if experiment_dir else args.experiment_dir, str(time.time())))
@@ -98,12 +93,7 @@ def train(args):
 
     agent = getattr(models, args.agent)(**agent_parameters)
 
-    episode_trigger_func = episode_trigger
-
-    if agent_name != "DQN":
-        episode_trigger_func = lambda t: t % 100 == 0
-
-    agent.env = RecordVideo(agent.env, episode_trigger=episode_trigger_func, video_folder=video_dir,
+    agent.env = RecordVideo(agent.env, episode_trigger=lambda t: t % args.val_every_step == 0, video_folder=video_dir,
                             name_prefix=f"video_{agent_name}")
 
     if agent_name == "DQN":

@@ -28,12 +28,6 @@ class RLAgent:
         self.count_noop = 0
         self.rewards_per_episode = []
 
-    def reset_environment(self):
-        return self.env.reset()
-
-    def close_environment(self):
-        self.env.close()
-
     @abstractmethod
     def policy(self, *args, **kwargs):
         pass
@@ -62,8 +56,7 @@ class RLAgent:
         }
 
         if hasattr(self, 'train_mode'):
-            model_state.update(
-                {'extra_parameters': {'train_mode': self.train_mode}})
+            model_state.update({'extra_parameters': {'train_mode': self.train_mode}})
 
         return model_state
 
