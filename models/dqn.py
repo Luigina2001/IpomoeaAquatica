@@ -89,6 +89,8 @@ class DQN(RLAgent, nn.Module):
 
         self.initialize_env(frame_skip=self.frame_skip, noop_max=self.noop_max)
 
+        self.q_values = []
+
         del self.train_mode
 
     def policy(self, state):
@@ -172,7 +174,6 @@ class DQN(RLAgent, nn.Module):
             states = states.unsqueeze(1).to(self.dummy_param.device)
 
             q_values = self.forward(states)
-
             avg_q_value = q_values.mean().item()
 
         return avg_q_value
@@ -243,6 +244,7 @@ class DQN(RLAgent, nn.Module):
                     # reset Q^ = Q
                     if processed_frames % target_update_freq == 0:
                         avg_q_value = self.calculate_avg_q_value()
+                        self.q_values.append(avg_q_value)
                         pg_bar.set_description(
                             f"Episode: {episode}, Avg Q (held-out): {avg_q_value:.2f}, Processed Frames: {processed_frames}"
                         )
@@ -272,6 +274,17 @@ class DQN(RLAgent, nn.Module):
 
             if video_dir and avg_playtime > 0:
                 log_results(wandb_run, {"Playtime": avg_playtime // n_episodes})
+
+        if self.q_values:
+            q_min = min(self.q_values)
+            q_max = max(self.q_values)
+
+            normalized_q_values = [
+                10 * (q - q_min) / (q_max - q_min) if q_max > q_min else 10 for q in self.q_values
+            ]
+
+            for q in normalized_q_values:
+                wandb_run.log({"Normalized Avg Q Values": q})
 
             self.env.close()
 
