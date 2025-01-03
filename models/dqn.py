@@ -362,7 +362,7 @@ class DQN(RLAgent, nn.Module):
                         consecutive_dbs_values.append(consecutive_dbs)
 
                     # WDC
-                    if len(dbs) > 0:
+                    if len(dbs_values) > 0:
                         wdc_n = sum([x for x in dbs if x < 0])
                         wdc_p = sum([x for x in dbs if x > 0])
 
@@ -413,5 +413,18 @@ class DQN(RLAgent, nn.Module):
         if len(dbs_values) > 0:
             for v in dbs_values:
                 log_results(wandb_run, {"DBS": v})
+
+            plt.figure(figsize=(12, 8))
+            colors = ["red" if v < 0 else "blue" for v in dbs_values]
+
+            episodes = range(len(dbs_values))
+            plt.bar(episodes, dbs_values, color=colors, width=0.95)
+
+            plt.xlabel("Episode")
+            plt.ylabel("DBS")
+            plt.title("DBS Histogram")
+
+            log_results(wandb_run, {"DBS Histogram": wandb.Image(plt)})
+            plt.close()
 
         self.env.close()
