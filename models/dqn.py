@@ -332,7 +332,7 @@ class DQN(RLAgent, nn.Module):
                 # RawRewards
                 raw_rewards.append(score)
                 plt.figure(figsize=(12, 8))
-                colors = ["red" if reward < 0 else "green" for reward in raw_rewards]
+                colors = ["red" if reward <= 0 else "green" for reward in raw_rewards]
                 plt.scatter(range(len(raw_rewards)), raw_rewards, c=colors, alpha=0.7)
                 plt.xlabel("Episode")
                 plt.ylabel("Reward")
