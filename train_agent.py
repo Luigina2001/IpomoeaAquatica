@@ -93,7 +93,7 @@ def train(args):
 
     agent = getattr(models, args.agent)(**agent_parameters)
 
-    agent.env = RecordVideo(agent.env, episode_trigger=lambda t: t % args.val_every_step == 0, video_folder=video_dir,
+    agent.env = RecordVideo(agent.env, episode_trigger=lambda t: t % args.val_every_ep == 0, video_folder=video_dir,
                             name_prefix=f"video_{agent_name}")
 
     if agent_name == "DQN":

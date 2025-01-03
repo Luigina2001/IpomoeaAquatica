@@ -1,5 +1,4 @@
 import os
-import wandb
 import torch
 import random
 
@@ -8,8 +7,9 @@ import numpy as np
 import os.path as osp
 import torch.nn as nn
 import torch.optim as optim
-import matplotlib.pyplot as plt
 import torch.nn.functional as F
+import wandb
+from matplotlib import pyplot as plt
 
 from tqdm import tqdm
 from .rl_agent import RLAgent
@@ -19,7 +19,7 @@ from utils.functions import initialize_early_stopping, handle_early_stopping, ha
 from gymnasium.wrappers import AtariPreprocessing
 from collections import namedtuple, deque
 
-# Fix 'NSInternalInconsistencyException' on MacOS
+# Fix 'NSInternalInconsistencyException' on macOS
 matplotlib.use('agg')
 
 Transition = namedtuple(
@@ -181,12 +181,13 @@ class DQN(RLAgent, nn.Module):
     def optimize(self, target_q_network, batch_size: int = 32):
         if len(self.replay_memory) < batch_size:
             raise ValueError(
-                f"Not enough experience. Current experience: {len(self.replay_memory)} - Current batch size: {batch_size}")
+                f"Not enough experience. Current experience: {len(self.replay_memory)} "
+                f"- Current batch size: {batch_size}")
 
         transitions = self.replay_memory.sample(batch_size)
         batch = Transition(*zip(*transitions))
 
-        device = self.dummy.device
+        device = self.dummy_param.device
 
         state_batch = torch.stack(tuple(torch.tensor(s) for s in batch.state), dim=0).to(device)
         state_batch = state_batch.unsqueeze(1)
@@ -232,6 +233,15 @@ class DQN(RLAgent, nn.Module):
 
         return avg_q_value
 
+    @staticmethod
+    def smooth_data(data, window_size=10):
+        return np.convolve(data, np.ones(window_size) / window_size, mode='valid')
+
+    @staticmethod
+    def normalize_data(data, new_min=0, new_max=1):
+        old_min, old_max = min(data), max(data)
+        return [(new_max - new_min) * (x - old_min) / (old_max - old_min) + new_min for x in data]
+
     def train_step(self, n_episodes: int, val_every_ep: int, batch_size: int = 32, target_update_freq: int = 10_000,
                    replay_start_size: int = 50_000, max_steps: int = MAX_STEPS, wandb_run=None, video_dir=None,
                    checkpoint_dir=None, patience: int = PATIENCE):
@@ -245,9 +255,16 @@ class DQN(RLAgent, nn.Module):
         target_q_network.eval()  # Not directly trained
 
         processed_frames = 0
+        prev_counter = 0
         avg_reward = 0
         avg_loss = 0.0
         avg_playtime = 0
+
+        raw_rewards = []
+        avg_rewards = []
+        consecutive_dbs_values = []
+        wdc_n, wdc_p = 0, 0
+        MMAVG_values = []
 
         with tqdm(range(1, n_episodes + 1)) as pg_bar:
             for episode in pg_bar:
@@ -275,7 +292,8 @@ class DQN(RLAgent, nn.Module):
                     # a uniform random policy is run for 'replay_start_size' frames to accumulate experience
                     # before learning starts
                     processed_frames += 1
-                    pg_desc = f"Episode: {episode}, Processed Frames: {processed_frames}, Step: {t}, Current Score: {score}"
+                    pg_desc = f"Episode: {episode}, Processed Frames: {processed_frames}, Step: {t}, " \
+                              f"Current Score: {score}"
 
                     if processed_frames >= replay_start_size:
                         avg_loss += self.optimize(target_q_network, batch_size)
@@ -294,6 +312,17 @@ class DQN(RLAgent, nn.Module):
                     state = next_state
                     pg_bar.set_description(pg_desc)
 
+                # RawRewards
+                raw_rewards.append(score)
+                plt.figure(figsize=(12, 8))
+                colors = ["red" if reward < 0 else "green" for reward in raw_rewards]
+                plt.scatter(range(len(raw_rewards)), raw_rewards, c=colors, alpha=0.7)
+                plt.xlabel("Episode")
+                plt.ylabel("Reward")
+                plt.title("Reward per Episode")
+                log_results(wandb_run, {"Reward Scatter": wandb.Image(plt)})
+                plt.close()
+
                 if processed_frames >= replay_start_size and self.env.has_wrapper_attr("recorded_frames"):
                     avg_playtime += len(self.env.get_wrapper_attr("recorded_frames"))
 
@@ -303,10 +332,55 @@ class DQN(RLAgent, nn.Module):
                     avg_q_value = self.calculate_avg_q_value()
                     self.q_values.append(avg_q_value)
 
+                    # AvgReward
+                    if len(raw_rewards) >= val_every_ep:
+                        avg_reward = np.mean(raw_rewards[-val_every_ep:])
+                        avg_rewards.append(avg_reward)
+
+                    # DBS
+                    if len(raw_rewards) > 1:
+                        dbs = [raw_rewards[i + 1] - raw_rewards[i] for i in range(len(raw_rewards) - 1)]
+                        consecutive_dbs = raw_rewards[-1] - raw_rewards[-2]
+                        consecutive_dbs_values.append(consecutive_dbs)
+
+                    # WDC
+                    if len(dbs) > 0:
+                        wdc_n = sum([x for x in dbs if x < 0])
+                        wdc_p = sum([x for x in dbs if x > 0])
+
+                    # MMAVG
+                    if len(raw_rewards) >= val_every_ep:
+                        MMAVG = (max(raw_rewards[-val_every_ep:]) - min(raw_rewards[-val_every_ep:])) / avg_reward
+                        MMAVG_values.append(MMAVG)
+
+                    smoothed_avg_rewards = self.smooth_data(avg_rewards, window_size=10)
                     episode_data = {
                         f"Avg Reward of {val_every_ep}": avg_reward / val_every_ep,
+                        "Smoothed AvgReward": smoothed_avg_rewards[-1] if len(smoothed_avg_rewards) > 0 else 0,
                         f"Avg Q (held-out) of {val_every_ep}:": avg_q_value,
+                        "WDCn": wdc_n,
+                        "WDCp": wdc_p,
+                        "MMAVG": MMAVG if len(MMAVG_values) > 0 else 0,
                     }
+
+                    if len(dbs) > 0:
+                        for value in dbs:
+                            log_results(wandb_run, {"DBS": value})
+
+                    if len(consecutive_dbs_values) == len(MMAVG_values):
+                        fig = plt.figure(figsize=(12, 8))
+                        ax = fig.add_subplot(111, projection='3d')
+                        episodes = range(len(consecutive_dbs_values))
+                        scatter = ax.scatter(episodes, consecutive_dbs_values, MMAVG_values,
+                                             c=consecutive_dbs_values, cmap='viridis', alpha=0.8)
+                        ax.set_xlabel('Episodes', fontsize=14)
+                        ax.set_ylabel('DBS', fontsize=14)
+                        ax.set_zlabel('MMAVG', fontsize=14)
+                        plt.title("3D Plot of DBS and MMAVG", fontsize=16)
+                        cbar = fig.colorbar(scatter, shrink=0.5, aspect=10)
+                        cbar.set_label('DBS Intensity', fontsize=12)
+                        log_results(wandb_run, {"DBS and MMAVG 3D Plot": wandb.Image(plt)})
+                        plt.close()
 
                     if processed_frames >= replay_start_size:
                         episode_data.update({f"Avg Loss of {val_every_ep}": avg_loss / val_every_ep})
@@ -316,8 +390,8 @@ class DQN(RLAgent, nn.Module):
 
                     log_results(wandb_run, episode_data)
 
-                    avg_reward = 0
                     avg_loss = 0
+                    avg_reward = 0
 
                     if handle_early_stopping(early_stopping=early_stopping, reward=score, agent=self, episode=episode,
                                              video_path=video_path):
