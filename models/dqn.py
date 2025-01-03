@@ -242,6 +242,22 @@ class DQN(RLAgent, nn.Module):
         old_min, old_max = min(data), max(data)
         return [(new_max - new_min) * (x - old_min) / (old_max - old_min) + new_min for x in data]
 
+    @staticmethod
+    def log_3d_plot(consecutive_dbs_values, mmavg_values, wandb_run):
+        fig = plt.figure(figsize=(12, 8))
+        ax = fig.add_subplot(111, projection='3d')
+        episodes = range(len(consecutive_dbs_values))
+        scatter = ax.scatter(episodes, consecutive_dbs_values, mmavg_values,
+                             c=consecutive_dbs_values, cmap='viridis', alpha=0.8)
+        ax.set_xlabel('Episodes', fontsize=14)
+        ax.set_ylabel('DBS', fontsize=14)
+        ax.set_zlabel('MMAVG', fontsize=14)
+        plt.title("3D Plot of DBS and MMAVG", fontsize=16)
+        cbar = fig.colorbar(scatter, shrink=0.5, aspect=10)
+        cbar.set_label('DBS Intensity', fontsize=12)
+        log_results(wandb_run, {"DBS and MMAVG 3D Plot": wandb.Image(plt)})
+        plt.close()
+
     def train_step(self, n_episodes: int, val_every_ep: int, batch_size: int = 32, target_update_freq: int = 10_000,
                    replay_start_size: int = 50_000, max_steps: int = MAX_STEPS, wandb_run=None, video_dir=None,
                    checkpoint_dir=None, patience: int = PATIENCE):
@@ -263,8 +279,9 @@ class DQN(RLAgent, nn.Module):
         raw_rewards = []
         avg_rewards = []
         consecutive_dbs_values = []
+        dbs_values = []
         wdc_n, wdc_p = 0, 0
-        MMAVG_values = []
+        mmavg_values = []
 
         with tqdm(range(1, n_episodes + 1)) as pg_bar:
             for episode in pg_bar:
@@ -340,6 +357,7 @@ class DQN(RLAgent, nn.Module):
                     # DBS
                     if len(raw_rewards) > 1:
                         dbs = [raw_rewards[i + 1] - raw_rewards[i] for i in range(len(raw_rewards) - 1)]
+                        dbs_values.extend(dbs[-val_every_ep:])
                         consecutive_dbs = raw_rewards[-1] - raw_rewards[-2]
                         consecutive_dbs_values.append(consecutive_dbs)
 
@@ -350,37 +368,20 @@ class DQN(RLAgent, nn.Module):
 
                     # MMAVG
                     if len(raw_rewards) >= val_every_ep:
-                        MMAVG = (max(raw_rewards[-val_every_ep:]) - min(raw_rewards[-val_every_ep:])) / avg_reward
-                        MMAVG_values.append(MMAVG)
+                        mmavg = (max(raw_rewards[-val_every_ep:]) - min(raw_rewards[-val_every_ep:])) / avg_reward
+                        mmavg_values.append(mmavg)
 
+                    # Smoothed Avg Rewards
                     smoothed_avg_rewards = self.smooth_data(avg_rewards, window_size=10)
+
                     episode_data = {
                         f"Avg Reward of {val_every_ep}": avg_reward / val_every_ep,
                         "Smoothed AvgReward": smoothed_avg_rewards[-1] if len(smoothed_avg_rewards) > 0 else 0,
                         f"Avg Q (held-out) of {val_every_ep}:": avg_q_value,
                         "WDCn": wdc_n,
                         "WDCp": wdc_p,
-                        "MMAVG": MMAVG if len(MMAVG_values) > 0 else 0,
+                        "MMAVG": mmavg if len(mmavg_values) > 0 else 0,
                     }
-
-                    if len(dbs) > 0:
-                        for value in dbs:
-                            log_results(wandb_run, {"DBS": value})
-
-                    if len(consecutive_dbs_values) == len(MMAVG_values):
-                        fig = plt.figure(figsize=(12, 8))
-                        ax = fig.add_subplot(111, projection='3d')
-                        episodes = range(len(consecutive_dbs_values))
-                        scatter = ax.scatter(episodes, consecutive_dbs_values, MMAVG_values,
-                                             c=consecutive_dbs_values, cmap='viridis', alpha=0.8)
-                        ax.set_xlabel('Episodes', fontsize=14)
-                        ax.set_ylabel('DBS', fontsize=14)
-                        ax.set_zlabel('MMAVG', fontsize=14)
-                        plt.title("3D Plot of DBS and MMAVG", fontsize=16)
-                        cbar = fig.colorbar(scatter, shrink=0.5, aspect=10)
-                        cbar.set_label('DBS Intensity', fontsize=12)
-                        log_results(wandb_run, {"DBS and MMAVG 3D Plot": wandb.Image(plt)})
-                        plt.close()
 
                     if processed_frames >= replay_start_size:
                         episode_data.update({f"Avg Loss of {val_every_ep}": avg_loss / val_every_ep})
@@ -389,6 +390,9 @@ class DQN(RLAgent, nn.Module):
                         episode_data.update({f"Avg Playtime of {val_every_ep}": avg_playtime // val_every_ep})
 
                     log_results(wandb_run, episode_data)
+
+                    if len(consecutive_dbs_values) == len(mmavg_values):
+                        self.log_3d_plot(consecutive_dbs_values, mmavg_values, wandb_run)
 
                     avg_loss = 0
                     avg_reward = 0
@@ -405,5 +409,9 @@ class DQN(RLAgent, nn.Module):
 
             for q in normalized_q_values:
                 log_results(wandb_run, {"Normalized Avg Q Values": q})
+
+        if len(dbs_values) > 0:
+            for v in dbs_values:
+                log_results(wandb_run, {"DBS": v})
 
         self.env.close()
