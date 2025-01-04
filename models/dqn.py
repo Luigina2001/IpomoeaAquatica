@@ -258,11 +258,30 @@ class DQN(RLAgent, nn.Module):
         log_results(wandb_run, {"DBS and MMAVG 3D Plot": wandb.Image(plt)})
         plt.close()
 
+    @staticmethod
+    def calculate_delta_q(q_values_prev, q_values_current):
+        # Q-value saturation refers to a condition where:
+        # 1. The Q-values Q(s, a) for states and actions do not change significantly between updates.
+        # 2. The gradient updates for the Q-network approach zero.
+        # 3. The agent has learned a nearly stable policy,
+        #    and subsequent episodes lead to only minimal variations in Q-values.
+
+        # If Q-values saturate too early, it might indicate a problem such as:
+        # - Non-explorative policy (low epsilon), limiting the agent's ability to discover new states and rewards.
+        # - Under-dimensioned network or excessively low learning rate, preventing effective learning.
+        # - Lack of relevant experience in the replay buffer, leading to suboptimal training data.
+
+        if q_values_prev is None:
+            return float('inf')  # first step
+
+        delta_q = torch.abs(q_values_current - q_values_prev).mean().item()
+        return delta_q
+
     def train_step(self, n_episodes: int, val_every_ep: int, batch_size: int = 32, target_update_freq: int = 10_000,
                    replay_start_size: int = 50_000, max_steps: int = MAX_STEPS, wandb_run=None, video_dir=None,
-                   checkpoint_dir=None, patience: int = PATIENCE):
+                   checkpoint_dir=None, patience: int = PATIENCE, epsilon: float = 1e-3):
 
-        early_stopping = initialize_early_stopping(checkpoint_dir, patience)
+        # early_stopping = initialize_early_stopping(checkpoint_dir, patience)
 
         target_q_network = DQN(env=None, n_channels=self.n_channels, n_actions=self.n_actions)
         target_q_network.env = self.env
@@ -283,17 +302,28 @@ class DQN(RLAgent, nn.Module):
         wdc_n, wdc_p = 0, 0
         mmavg_values = []
 
+        q_values_prev = None
+        patience_counter = 0
+
         with tqdm(range(1, n_episodes + 1)) as pg_bar:
             for episode in pg_bar:
                 state, _ = self.env.reset()
                 score = 0
 
-                if prev_counter < early_stopping.counter:
+                # TODO: da rivedere
+                '''if prev_counter < early_stopping.counter:
                     if video_path and osp.exists(video_path):
                         os.remove(video_path)  # remove video if it was not one of the best
 
                 video_path = handle_video(video_dir, episode, prefix="DQN")
-                prev_counter = early_stopping.counter
+                prev_counter = early_stopping.counter'''
+
+                if patience < patience_counter:
+                    if video_path and osp.exists(video_path):
+                        print(f"Removing video from episode {episode}: {video_path}")
+                        os.remove(video_path)  # remove video if it was not one of the best
+
+                video_path = handle_video(video_dir, episode, prefix="DQN")
 
                 for t in range(max_steps):
                     action = self.policy(state)
@@ -315,6 +345,26 @@ class DQN(RLAgent, nn.Module):
                     if processed_frames >= replay_start_size:
                         avg_loss += self.optimize(target_q_network, batch_size)
 
+                        # early stopping only after the replay buffer is full
+                        q_values_current = self.forward(
+                            torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.dummy_param.device))
+
+                        # Delta Q
+                        delta_q = self.calculate_delta_q(q_values_prev, q_values_current)
+                        log_results(wandb_run, {"Delta Q": delta_q})
+                        q_values_prev = q_values_current
+
+                        # Saturation monitoring
+                        if delta_q < epsilon:
+                            patience_counter += 1
+                            if patience_counter >= patience:
+                                print(
+                                    f"Early stopping triggered at episode {episode} after {patience} "
+                                    f"consecutive stable episodes.")
+                                return
+                        else:
+                            patience_counter = 0
+
                     # linearly decay eps
                     if processed_frames < self.decay_steps:
                         self.eps_schedule(processed_frames)
@@ -328,6 +378,7 @@ class DQN(RLAgent, nn.Module):
 
                     state = next_state
                     pg_bar.set_description(pg_desc)
+
 
                 # RawRewards
                 raw_rewards.append(score)
@@ -397,9 +448,9 @@ class DQN(RLAgent, nn.Module):
                     avg_loss = 0
                     avg_reward = 0
 
-                    if handle_early_stopping(early_stopping=early_stopping, reward=score, agent=self, episode=episode,
-                                             video_path=video_path):
-                        break
+                    # if handle_early_stopping(early_stopping=early_stopping, reward=score, agent=self, episode=episode,
+                    # video_path=video_path):
+                    # break
 
         if self.q_values:
             q_min = min(self.q_values)

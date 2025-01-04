@@ -175,6 +175,7 @@ def argument_parser():
                         help="Number of processed frames before learning")
     parser.add_argument("--held_out_ratio", type=float, default=0.1,
                         help="Probability of putting a state into the hold-out set in the DQN class")
+    parser.add_argument("--epsilon", type=float, default=1e-3, help="Threshold for Q-values saturation")
 
     return parser
 
