@@ -5,8 +5,13 @@ import os.path as osp
 import cv2
 import numpy as np
 
-from . import EarlyStopping
+from .utils import EarlyStopping
 from .constants import PLAYER_COLOR, EARTH_COLOR, INVADERS_COLOR, SHIELD_COLOR, MOTHERSHIP_COLOR, PATIENCE
+
+
+def normalize_data(data, new_min=0, new_max=1):
+    old_min, old_max = min(data), max(data)
+    return [(new_max - new_min) * (x - old_min) / (old_max - old_min) + new_min for x in data]
 
 
 def handle_video(video_dir, episode, prefix="video"):
@@ -27,13 +32,14 @@ def log_results(wandb_run, episode_data):
         wandb_run.log(episode_data)
 
 
-def handle_early_stopping(early_stopping, reward, agent, episode, video_path):
-    if early_stopping and early_stopping(reward, agent, episode):
+def handle_early_stopping(early_stopping, metric_value, agent, episode, video_path, epsilon=None):
+    if early_stopping and early_stopping(metric_value, agent, episode, epsilon):
         if video_path and osp.exists(video_path):
             os.remove(video_path)
         return True
 
     return False
+
 
 def seed_everything(seed: int):
     random.seed(seed)

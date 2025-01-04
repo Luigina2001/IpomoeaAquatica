@@ -281,8 +281,6 @@ class DQN(RLAgent, nn.Module):
                    replay_start_size: int = 50_000, max_steps: int = MAX_STEPS, wandb_run=None, video_dir=None,
                    checkpoint_dir=None, patience: int = PATIENCE, epsilon: float = 1e-3):
 
-        # early_stopping = initialize_early_stopping(checkpoint_dir, patience)
-
         target_q_network = DQN(env=None, n_channels=self.n_channels, n_actions=self.n_actions)
         target_q_network.env = self.env
         target_q_network.to(self.dummy_param.device)
@@ -290,10 +288,11 @@ class DQN(RLAgent, nn.Module):
         target_q_network.eval()  # Not directly trained
 
         processed_frames = 0
-        prev_counter = 0
+        patience_counter = 0
         avg_reward = 0
         avg_loss = 0.0
         avg_playtime = 0
+        learnable_episodes = 0
 
         raw_rewards = []
         avg_rewards = []
@@ -303,20 +302,11 @@ class DQN(RLAgent, nn.Module):
         mmavg_values = []
 
         q_values_prev = None
-        patience_counter = 0
 
         with tqdm(range(1, n_episodes + 1)) as pg_bar:
             for episode in pg_bar:
                 state, _ = self.env.reset()
                 score = 0
-
-                # TODO: da rivedere
-                '''if prev_counter < early_stopping.counter:
-                    if video_path and osp.exists(video_path):
-                        os.remove(video_path)  # remove video if it was not one of the best
-
-                video_path = handle_video(video_dir, episode, prefix="DQN")
-                prev_counter = early_stopping.counter'''
 
                 if patience < patience_counter:
                     if video_path and osp.exists(video_path):
@@ -349,22 +339,6 @@ class DQN(RLAgent, nn.Module):
                         q_values_current = self.forward(
                             torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.dummy_param.device))
 
-                        # Delta Q
-                        delta_q = self.calculate_delta_q(q_values_prev, q_values_current)
-                        log_results(wandb_run, {"Delta Q": delta_q})
-                        q_values_prev = q_values_current
-
-                        # Saturation monitoring
-                        if delta_q < epsilon:
-                            patience_counter += 1
-                            if patience_counter >= patience:
-                                print(
-                                    f"Early stopping triggered at episode {episode} after {patience} "
-                                    f"consecutive stable episodes.")
-                                return
-                        else:
-                            patience_counter = 0
-
                     # linearly decay eps
                     if processed_frames < self.decay_steps:
                         self.eps_schedule(processed_frames)
@@ -379,12 +353,10 @@ class DQN(RLAgent, nn.Module):
                     state = next_state
                     pg_bar.set_description(pg_desc)
 
-
                 # RawRewards
                 raw_rewards.append(score)
                 plt.figure(figsize=(12, 8))
-                colors = ["red" if reward <= 0 else "green" for reward in raw_rewards]
-                plt.scatter(range(len(raw_rewards)), raw_rewards, c=colors, alpha=0.7)
+                plt.scatter(range(len(raw_rewards)), raw_rewards, alpha=0.7)
                 plt.xlabel("Episode")
                 plt.ylabel("Reward")
                 plt.title("Reward per Episode")
@@ -393,6 +365,9 @@ class DQN(RLAgent, nn.Module):
 
                 if processed_frames >= replay_start_size and self.env.has_wrapper_attr("recorded_frames"):
                     avg_playtime += len(self.env.get_wrapper_attr("recorded_frames"))
+
+                if processed_frames >= replay_start_size:
+                    learnable_episodes += 1
 
                 avg_reward += score
 
@@ -434,7 +409,7 @@ class DQN(RLAgent, nn.Module):
                         "MMAVG": mmavg if len(mmavg_values) > 0 else 0,
                     }
 
-                    if processed_frames >= replay_start_size:
+                    if learnable_episodes % val_every_ep == 0 and processed_frames >= replay_start_size:
                         episode_data.update({f"Avg Loss of {val_every_ep}": avg_loss / val_every_ep})
 
                     if video_dir and avg_playtime > 0:
@@ -448,9 +423,21 @@ class DQN(RLAgent, nn.Module):
                     avg_loss = 0
                     avg_reward = 0
 
-                    # if handle_early_stopping(early_stopping=early_stopping, reward=score, agent=self, episode=episode,
-                    # video_path=video_path):
-                    # break
+                    # Delta Q
+                    delta_q = self.calculate_delta_q(q_values_prev, q_values_current)
+                    log_results(wandb_run, {"Delta Q": delta_q})
+                    q_values_prev = q_values_current
+
+                    # Saturation monitoring
+                    if learnable_episodes % val_every_ep and delta_q < epsilon:
+                        patience_counter += 1
+                        if patience_counter >= patience:
+                            print(
+                                f"Early stopping triggered at episode {episode} (of which {learnable_episodes} were learnable) "
+                                f"after {patience} (of which {learnable_episodes} were learnable) consecutive stable episodes.")
+                            break
+                    else:
+                        patience_counter = 0
 
         if self.q_values:
             q_min = min(self.q_values)
@@ -477,5 +464,16 @@ class DQN(RLAgent, nn.Module):
 
             log_results(wandb_run, {"DBS Histogram": wandb.Image(plt)})
             plt.close()
+
+            data = [[(_ + 1) * val_every_ep, dbs_values[_]] for _ in range(len(dbs_values))]
+            table = wandb.Table(data=data, columns=["Episode", "DBS"])
+            log_results(wandb_run, {"DBS Table": wandb.plot.bar(table, "Episode", "DBS")})
+
+        if len(raw_rewards) > 0:
+            data = [[(_ + 1), raw_rewards[_]] for _ in range(episode)]
+            table = wandb.Table(data=data, columns=["Episode", "Raw Reward"])
+            log_results(wandb_run, {"Raw Reward Table": wandb.plot.scatter(table, "Episode", "Raw Reward")})
+
+        log_results(wandb_run, {"Convergence steps": processed_frames})
 
         self.env.close()

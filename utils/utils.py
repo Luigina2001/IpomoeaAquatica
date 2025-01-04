@@ -14,7 +14,8 @@ def seed_everything(seed: int):
 
 
 class EarlyStopping:
-    def __init__(self, metric_to_track: str, objective: str, checkpoint_dir: str, checkpoint_ext: str = "ckpt", patience: int = PATIENCE, trace_func=print):
+    def __init__(self, metric_to_track: str, objective: str, checkpoint_dir: str, checkpoint_ext: str = "ckpt",
+                 patience: int = PATIENCE, trace_func=print):
 
         if objective not in ["minimize", "maximize"]:
             raise ValueError("Objective can only be 'maximize' or 'minimize'.")
@@ -29,11 +30,14 @@ class EarlyStopping:
         self.best_value = float(
             'inf' if self.objective == 'minimize' else '-inf')
 
-    def __call__(self, metric_value, model, episode):
+    def __call__(self, metric_value, model, episode, epsilon=None):
         has_improved = (
-            (self.objective == "minimize" and metric_value < self.best_value) or
-            (self.objective == "maximize" and metric_value > self.best_value)
+                (self.objective == "minimize" and metric_value < self.best_value) or
+                (self.objective == "maximize" and metric_value > self.best_value)
         )
+
+        if epsilon is not None:
+            has_improved = metric_value < epsilon
 
         if has_improved:
             self.trace_func(
