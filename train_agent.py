@@ -35,7 +35,7 @@ def train(args):
 
         run_name = args.run_name if args.run_name else (agent_name.lower() if args.no_log_to_wandb else None)
         run = wandb.init(entity=args.entity, project=args.project, name=run_name)
-        run.name = agent_name + "-" + run.name
+        run.name = agent_name + "-" + run.name if args.sweep_id is None else agent_name + f"-sweep-{args.sweep_id}-" + run.name
         experiment_dir = str(osp.join(experiment_dir if experiment_dir else args.experiment_dir, run.id))
     else:
         experiment_dir = str(
@@ -109,12 +109,14 @@ def train(args):
 
 def main(args):
     # run wandb sweep to tune hyperparameters
+    args.sweep_id = None
     if args.tune_hyperparameters:
         with open(args.sweep_config, "r") as f:
             sweep_config = yaml.load(f, Loader=yaml.FullLoader)
         sweep_id = wandb.sweep(
             sweep=sweep_config, entity=args.entity, project=args.project)
         sweep_config.update(vars(args))
+        args.sweep_id = sweep_id
         wandb.agent(sweep_id, partial(train, args), count=args.sweep_count)
     else:
         train(args=args)
