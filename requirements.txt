@@ -57,9 +57,9 @@ swig==4.3.0
 sympy==1.13.1
 tenacity==9.0.0
 threadpoolctl==3.5.0
-torch==2.5.1+cpu
-torchaudio==2.5.1+cpu
-torchvision==0.20.1+cpu
+torch==2.7.0.dev20250105
+torchaudio==2.6.0.dev20250105
+torchvision==0.22.0.dev20250105
 tqdm==4.67.1
 typing_extensions==4.12.2
 tzdata==2024.2
