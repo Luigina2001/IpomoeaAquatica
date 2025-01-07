@@ -302,6 +302,7 @@ class DQN(RLAgent, nn.Module):
         mmavg_values = []
 
         q_values_prev = None
+        q_values_current = None
 
         with tqdm(range(1, n_episodes + 1)) as pg_bar:
             for episode in pg_bar:
@@ -364,7 +365,7 @@ class DQN(RLAgent, nn.Module):
                 plt.close()
 
                 if processed_frames >= replay_start_size and self.env.has_wrapper_attr("recorded_frames"):
-                    avg_playtime += len(self.env.get_wrapper_attr("recorded_frames"))
+                    avg_playtime += (len(self.env.get_wrapper_attr("recorded_frames")) / 30)
 
                 if processed_frames >= replay_start_size:
                     learnable_episodes += 1
@@ -465,9 +466,9 @@ class DQN(RLAgent, nn.Module):
             log_results(wandb_run, {"DBS Histogram": wandb.Image(plt)})
             plt.close()
 
-            data = [[(_ + 1) * val_every_ep, dbs_values[_]] for _ in range(len(dbs_values))]
+            data = [[_ * val_every_ep, dbs_values[_]] for _ in range(0, len(dbs_values), val_every_ep)]
             table = wandb.Table(data=data, columns=["Episode", "DBS"])
-            log_results(wandb_run, {"DBS Table": wandb.plot.bar(table, "Episode", "DBS")})
+            log_results(wandb_run, {f"DBS Table of {val_every_ep}": wandb.plot.bar(table, "Episode", "DBS")})
 
         if len(raw_rewards) > 0:
             data = [[(_ + 1), raw_rewards[_]] for _ in range(episode)]
@@ -475,5 +476,10 @@ class DQN(RLAgent, nn.Module):
             log_results(wandb_run, {"Raw Reward Table": wandb.plot.scatter(table, "Episode", "Raw Reward")})
 
         log_results(wandb_run, {"Convergence steps": processed_frames})
+
+        checkpoint_path = os.path.join(checkpoint_dir, f"DQN_ep_{episode}.pkl")
+        print(f"Saving model to {checkpoint_path}")
+        self.save_model(checkpoint_path)
+        print("Model saved successfully!")
 
         self.env.close()
