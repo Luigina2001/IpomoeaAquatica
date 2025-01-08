@@ -161,7 +161,7 @@ def argument_parser():
                         help="Batch size for DQN optimization")
     parser.add_argument("--target_update_freq", type=int,
                         default=10, help="Frequency to update the target network")
-    parser.add_argument("--frame_skip", type=int, default=3,
+    parser.add_argument("--frame_skip", type=int, default=4,
                         help="Number of frames to skip in FrameSkipEnv")
     parser.add_argument("--normalize_reward", action="store_true",
                         default=False, help="Normalize agent reward")

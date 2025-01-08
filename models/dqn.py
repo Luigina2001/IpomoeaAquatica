@@ -16,7 +16,7 @@ from .rl_agent import RLAgent
 from utils.constants import PATIENCE, MAX_STEPS
 from utils.functions import initialize_early_stopping, handle_early_stopping, handle_video, log_results
 
-from gymnasium.wrappers import AtariPreprocessing
+from gymnasium.wrappers import AtariPreprocessing, FrameStackObservation
 from collections import namedtuple, deque
 
 # Fix 'NSInternalInconsistencyException' on macOS
@@ -51,9 +51,9 @@ class ReplayMemory:
 
 
 class DQN(RLAgent, nn.Module):
-    def __init__(self, env, n_channels: int = 1, n_actions: int = 6, gamma: int = 0.99, eps_start: int = 1,
+    def __init__(self, env, n_channels: int = 4, n_actions: int = 6, gamma: int = 0.99, eps_start: int = 1,
                  eps_end: int = 0.01, decay_steps: int = 1_000_000, memory_capacity: int = 1_000_000,
-                 held_out_ratio=0.1, lr: int = 0.000025, frame_skip: int = 3, noop_max: int = 30):
+                 held_out_ratio=0.1, lr: int = 0.000025, frame_skip: int = 4, noop_max: int = 0):
         RLAgent.__init__(self, env, lr, gamma, eps_start, eps_end, decay_steps)
         nn.Module.__init__(self)
 
@@ -91,7 +91,7 @@ class DQN(RLAgent, nn.Module):
         self.out_layer = nn.Linear(512, self.n_actions)
 
         self.replay_memory = ReplayMemory(memory_capacity, held_out_ratio)
-        self.optimizer = optim.Adam(self.parameters(), lr=self.lr)
+        self.optimizer = optim.RMSprop(self.parameters(), lr=self.lr)
 
         if self.env:
             self.initialize_env(frame_skip=self.frame_skip, noop_max=self.noop_max)
@@ -142,7 +142,7 @@ class DQN(RLAgent, nn.Module):
 
         self.env = AtariPreprocessing(
             env=self.env, noop_max=noop_max, frame_skip=frame_skip, scale_obs=True)
-        # self.env = FrameStackObservation(self.env, stack_size=4)
+        self.env = FrameStackObservation(self.env, stack_size=4)
 
     def serialize(self):
         model_state = RLAgent.serialize(self)
@@ -191,14 +191,17 @@ class DQN(RLAgent, nn.Module):
         device = self.dummy_param.device
 
         state_batch = torch.stack(tuple(torch.tensor(s) for s in batch.state), dim=0).to(device)
-        state_batch = state_batch.unsqueeze(1)
+        # state_batch = state_batch.unsqueeze(1)
         action_batch = torch.tensor(batch.action, dtype=torch.int64).to(device)
+        action_batch = torch.squeeze(action_batch)
         reward_batch = torch.tensor(batch.reward, dtype=torch.float32).to(device)
+        reward_batch = torch.squeeze(reward_batch)
         non_final_mask = torch.tensor(tuple(map(lambda s: s is not None, batch.next_state)), dtype=torch.bool).to(
             device)
         non_final_next_states = torch.stack([torch.from_numpy(s) for s in batch.next_state if s is not None]).to(
             dtype=torch.float32).to(device)
-        non_final_next_states = non_final_next_states.unsqueeze(1)
+        # non_final_next_states = non_final_next_states.unsqueeze(1)
+
 
         action_distribution = self(state_batch)
         action_batch = action_batch.unsqueeze(1).long()
@@ -215,6 +218,7 @@ class DQN(RLAgent, nn.Module):
 
         self.optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=1.0)
 
         self.optimizer.step()
 
@@ -227,7 +231,7 @@ class DQN(RLAgent, nn.Module):
         with torch.no_grad():
             transitions = self.replay_memory.sample_held_out()  # held-out set states
             states = torch.stack([torch.tensor(t.state, dtype=torch.float32) for t in transitions])
-            states = states.unsqueeze(1).to(self.dummy_param.device)
+            states = states.to(self.dummy_param.device)
 
             q_values = self.forward(states)
             avg_q_value = q_values.mean().item()
@@ -324,7 +328,8 @@ class DQN(RLAgent, nn.Module):
                     next_state = next_state if not done else None
 
                     # clip reward between -1 and 1 for training stability
-                    self.replay_memory.push(state, action.item(), max(-1.0, min(float(reward), 1.0)), next_state)
+                    # self.replay_memory.push(state, action.item(), max(-1.0, min(float(reward), 1.0)), next_state)
+                    self.replay_memory.push(state, action.item(), reward, next_state)
 
                     score += reward
 
@@ -336,6 +341,7 @@ class DQN(RLAgent, nn.Module):
 
                     if processed_frames >= replay_start_size:
                         loss = self.optimize(target_q_network, batch_size)
+                        pg_desc += f", Loss: {loss:.2f}"
                         if loss is not None:
                             avg_loss += loss
 
@@ -414,12 +420,14 @@ class DQN(RLAgent, nn.Module):
                     }
 
                     if learnable_episodes % val_every_ep == 0 and processed_frames >= replay_start_size:
-                        episode_data.update({f"Avg Loss of {val_every_ep}": avg_loss / val_every_ep})
+                        wandb.log({f"Avg Loss of {val_every_ep}": avg_loss / val_every_ep})
+                        # episode_data.update({f"Avg Loss of {val_every_ep}": avg_loss / val_every_ep})
 
                     if video_dir and avg_playtime > 0 and val_every_ep > 0:
                         key = f"Avg Playtime of {val_every_ep}"
                         value = avg_playtime // val_every_ep
-                        episode_data.update({key: value})
+                        # episode_data.update({key: value})
+                        wandb.log({key: value})
 
                     log_results(wandb_run, episode_data)
 
