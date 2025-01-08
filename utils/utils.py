@@ -22,11 +22,11 @@ class EarlyStopping:
         self.best_value = float('inf')
 
     def __call__(self, delta_q, model, episode, video_path=None):
-
-        if delta_q < self.threshold:
-            self.trace_func(f"Delta Q improved from {self.best_value} to {delta_q}!")
+        if delta_q <= self.threshold:
+            self.trace_func(f"Delta Q reached converged!")
             self.counter = 0
             self.save_checkpoint(delta_q, model, episode)
+            return True
         elif delta_q >= self.best_value:
             self.counter += 1
             if video_path and os.path.exists(video_path):
@@ -38,12 +38,14 @@ class EarlyStopping:
                 return True
 
         self.best_value = delta_q
+        self.save_checkpoint(delta_q, model, episode)
+        self.trace_func(f"Delta Q improved from {self.best_value} to {delta_q}!")
         return False
 
     def save_checkpoint(self, metric_value, model, episode):
         model_name = os.path.dirname(
             self.checkpoint_dir).split(os.path.sep)[-1]
-        checkpoint_filename = f"{model_name}_ep_{episode}_delta_q_{metric_value}.{self.checkpoint_ext}"
+        checkpoint_filename = f"{model_name}_ep_{episode}_delta_q_{metric_value:.4f}.{self.checkpoint_ext}"
         checkpoint_path = os.path.join(
             self.checkpoint_dir, checkpoint_filename)
 
@@ -124,6 +126,7 @@ class MetricLogger:
         dbs = [self.raw_rewards[i + 1] - self.raw_rewards[i] for i in range(len(self.raw_rewards) - 1)]
         self.dbs_values.extend(dbs[-self.val_every_ep:])
         self.consecutive_dbs_values.append(self.raw_rewards[-1] - self.raw_rewards[-2])
+
         # WDC
         wdc_n = sum([x for x in dbs if x < 0])
         wdc_p = sum([x for x in dbs if x > 0])

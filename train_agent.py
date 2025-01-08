@@ -10,7 +10,7 @@ import os.path as osp
 import gymnasium as gym
 
 from functools import partial
-from utils import seed_everything
+from utils.functions import seed_everything
 from gymnasium.wrappers import RecordVideo
 from utils.constants import N_EPISODES, N_STEPS, PATIENCE
 
@@ -72,9 +72,6 @@ def train(args):
             'normalize_reward': args.normalize_reward
         })
 
-        train_args.update({
-            'var_threshold': args.var_threshold,
-        })
     elif agent_name == "DQN":
         agent_parameters.update({
             "memory_capacity": args.memory_capacity

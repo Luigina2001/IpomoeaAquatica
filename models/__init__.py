@@ -1,2 +1,2 @@
 from .dqn import DQN
-# from .q_learning import QLearning
+from .q_learning import QLearning

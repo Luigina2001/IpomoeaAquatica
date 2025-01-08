@@ -246,7 +246,6 @@ class DQN(RLAgent, nn.Module):
         avg_reward = 0
         avg_loss = 0.0
         avg_playtime = 0
-        learnable_episodes = 0
 
         q_values_prev = None
         q_values_current = None
@@ -282,7 +281,6 @@ class DQN(RLAgent, nn.Module):
                         if loss is not None:
                             avg_loss += loss
 
-                        # early stopping only after the replay buffer is full
                         q_values_current = self.forward(
                             torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.dummy_param.device))
 
@@ -307,9 +305,6 @@ class DQN(RLAgent, nn.Module):
                 if processed_frames >= replay_start_size and self.env.has_wrapper_attr("recorded_frames"):
                     avg_playtime += len(self.env.get_wrapper_attr("recorded_frames")) / 30
 
-                if processed_frames >= replay_start_size:
-                    learnable_episodes += 1
-
                 avg_reward += score
 
                 if episode % val_every_ep == 0:
@@ -325,7 +320,7 @@ class DQN(RLAgent, nn.Module):
                     q_values_prev = q_values_current
 
                     # Saturation monitoring
-                    if learnable_episodes % val_every_ep and early_stopping(delta_q, self, episode, video_path):
+                    if early_stopping(delta_q, self, episode, video_path):
                         print(
                             f"Early stopping triggered at episode {episode} (of which {learnable_episodes} were learnable) "
                             f"after {patience} (of which {learnable_episodes} were learnable) consecutive stable episodes.")
