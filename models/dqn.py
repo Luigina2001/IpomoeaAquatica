@@ -107,7 +107,7 @@ class DQN(RLAgent, nn.Module):
 
         if self.training and np.random.uniform(0, 1) < self.eps:
             # Exploration: pull random action
-            return torch.tensor(np.random.choice(self.n_actions))
+            return torch.tensor(self.env.action_space.sample())
         # Exploitation: pull the best greedy action
         with torch.no_grad():
             # Add batch dimension
@@ -142,6 +142,7 @@ class DQN(RLAgent, nn.Module):
 
         self.env = AtariPreprocessing(
             env=self.env, noop_max=noop_max, frame_skip=frame_skip, scale_obs=True)
+        # self.env = FrameStackObservation(self.env, stack_size=4)
 
     def serialize(self):
         model_state = RLAgent.serialize(self)
@@ -323,7 +324,7 @@ class DQN(RLAgent, nn.Module):
                     next_state = next_state if not done else None
 
                     # clip reward between -1 and 1 for training stability
-                    self.replay_memory.push(state, action.item(), max(-1.0, min(reward, 1.0)), next_state)
+                    self.replay_memory.push(state, action.item(), max(-1.0, min(float(reward), 1.0)), next_state)
 
                     score += reward
 
@@ -334,7 +335,9 @@ class DQN(RLAgent, nn.Module):
                               f"Current Score: {score}"
 
                     if processed_frames >= replay_start_size:
-                        avg_loss += self.optimize(target_q_network, batch_size)
+                        loss = self.optimize(target_q_network, batch_size)
+                        if loss is not None:
+                            avg_loss += loss
 
                         # early stopping only after the replay buffer is full
                         q_values_current = self.forward(
@@ -365,7 +368,7 @@ class DQN(RLAgent, nn.Module):
                 plt.close()
 
                 if processed_frames >= replay_start_size and self.env.has_wrapper_attr("recorded_frames"):
-                    avg_playtime += (len(self.env.get_wrapper_attr("recorded_frames")) / 30)
+                    avg_playtime += len(self.env.get_wrapper_attr("recorded_frames")) / 30
 
                 if processed_frames >= replay_start_size:
                     learnable_episodes += 1
@@ -413,8 +416,10 @@ class DQN(RLAgent, nn.Module):
                     if learnable_episodes % val_every_ep == 0 and processed_frames >= replay_start_size:
                         episode_data.update({f"Avg Loss of {val_every_ep}": avg_loss / val_every_ep})
 
-                    if video_dir and avg_playtime > 0:
-                        episode_data.update({f"Avg Playtime of {val_every_ep}": avg_playtime // val_every_ep})
+                    if video_dir and avg_playtime > 0 and val_every_ep > 0:
+                        key = f"Avg Playtime of {val_every_ep}"
+                        value = avg_playtime // val_every_ep
+                        episode_data.update({key: value})
 
                     log_results(wandb_run, episode_data)
 
@@ -447,11 +452,13 @@ class DQN(RLAgent, nn.Module):
             normalized_q_values = [10 * (q - q_min) / (q_max - q_min) if q_max > q_min else 10 for q in self.q_values]
 
             for q in normalized_q_values:
-                log_results(wandb_run, {"Normalized Avg Q Values": q})
+                wandb.log({"Normalized Avg Q Values": q})
+                # wandb_run(wandb_run, {"Normalized Avg Q Values": q})
 
         if len(dbs_values) > 0:
             for v in dbs_values:
-                log_results(wandb_run, {"DBS": v})
+                # log_results(wandb_run, {"DBS": v})
+                wandb.log({"DBS": v})
 
             plt.figure(figsize=(12, 8))
             colors = ["red" if v < 0 else "blue" for v in dbs_values]
