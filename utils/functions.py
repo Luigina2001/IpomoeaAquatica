@@ -5,8 +5,11 @@ import os.path as osp
 import cv2
 import numpy as np
 
-from .utils import EarlyStopping
 from .constants import PLAYER_COLOR, EARTH_COLOR, INVADERS_COLOR, SHIELD_COLOR, MOTHERSHIP_COLOR, PATIENCE
+
+
+def smooth_data(data, window_size=10):
+    return np.convolve(data, np.ones(window_size) / window_size, mode='valid')
 
 
 def normalize_data(data, new_min=0, new_max=1):
@@ -18,27 +21,6 @@ def handle_video(video_dir, episode, prefix="video"):
     if video_dir:
         return osp.join(video_dir, f"video_{prefix}-episode-{episode}.mp4")
     return None
-
-
-def initialize_early_stopping(checkpoint_dir: str, patience: int = PATIENCE, metric: str = "Reward",
-                              objective: str = "maximize"):
-    if checkpoint_dir:
-        return EarlyStopping(metric, objective, checkpoint_dir=checkpoint_dir, patience=patience)
-    return None
-
-
-def log_results(wandb_run, episode_data):
-    if wandb_run:
-        wandb_run.log(episode_data)
-
-
-def handle_early_stopping(early_stopping, metric_value, agent, episode, video_path, epsilon=None):
-    if early_stopping and early_stopping(metric_value, agent, episode, epsilon):
-        if video_path and osp.exists(video_path):
-            os.remove(video_path)
-        return True
-
-    return False
 
 
 def seed_everything(seed: int):
