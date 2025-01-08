@@ -63,7 +63,8 @@ def train(args):
         "wandb_run": run,
         "video_dir": video_dir,
         "checkpoint_dir": experiment_dir,
-        "val_every_ep": args.val_every_ep
+        "val_every_ep": args.val_every_ep,
+        "epsilon": args.epsilon
     }
 
     if agent_name == "QLearning":
