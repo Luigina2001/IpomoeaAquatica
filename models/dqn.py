@@ -321,16 +321,8 @@ class DQN(RLAgent, nn.Module):
 
                     # Saturation monitoring
                     if early_stopping(delta_q, self, episode, video_path):
-                        print(
-                            f"Early stopping triggered at episode {episode} (of which {learnable_episodes} were learnable) "
-                            f"after {patience} (of which {learnable_episodes} were learnable) consecutive stable episodes.")
                         break
 
         metric_logger.log_final_metrics(episode, processed_frames)
-
-        checkpoint_path = os.path.join(checkpoint_dir, f"DQN_ep_{episode}.pkl")
-        print(f"Saving model to {checkpoint_path}")
-        self.save_model(checkpoint_path)
-        print("Model saved successfully!")
 
         self.env.close()

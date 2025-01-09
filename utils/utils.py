@@ -36,10 +36,10 @@ class EarlyStopping:
             if self.counter >= self.patience:
                 self.trace_func(f"Delta Q did not improve for {self.counter} episodes. Stopping...")
                 return True
-
-        self.best_value = delta_q
-        self.save_checkpoint(delta_q, model, episode)
-        self.trace_func(f"Delta Q improved from {self.best_value} to {delta_q}!")
+        else:
+            self.best_value = delta_q
+            self.save_checkpoint(delta_q, model, episode)
+            self.trace_func(f"Delta Q improved from {self.best_value} to {delta_q}!")
         return False
 
     def save_checkpoint(self, metric_value, model, episode):
