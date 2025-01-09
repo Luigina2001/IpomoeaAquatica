@@ -37,10 +37,10 @@ class EarlyStopping:
                 self.trace_func(f"Delta Q did not improve for {self.counter} episodes. Stopping...")
                 return True
         else:
+            self.trace_func(f"Delta Q improved from {self.best_value} to {delta_q}!")
             self.best_value = delta_q
             self.counter = 0
             self.save_checkpoint(delta_q, model, episode)
-            self.trace_func(f"Delta Q improved from {self.best_value} to {delta_q}!")
         return False
 
     def save_checkpoint(self, metric_value, model, episode):
@@ -94,7 +94,7 @@ class MetricLogger:
         if isinstance(curr_q_values, torch.Tensor):
             delta_q = torch.abs(curr_q_values - prev_q_values).mean().item()
         else:
-            delta_q =  np.abs(curr_q_values - prev_q_values)
+            delta_q = np.abs(curr_q_values - prev_q_values)
 
         if self.wandb_run:
             self.wandb_run.log({"Delta Q": delta_q})

@@ -140,10 +140,7 @@ class QLearning(RLAgent):
                     pg_bar.set_description(
                         f"Episode: {episode}, Step: {_}, Cumulative Reward: {cumulative_reward}, Current Score: {reward_info['score']}")
 
-                    if len(metric_logger.raw_rewards) > 0:
-                        metric_logger.raw_rewards.append(abs(reward_info['score'] - metric_logger.raw_rewards[-1]))
-                    else:
-                        metric_logger.raw_rewards.append(reward_info['score'])
+                metric_logger.raw_rewards.append(reward_info['score'])
 
                 cumulative_rewards.append(cumulative_reward)
                 # Cumulative Reward
@@ -155,8 +152,8 @@ class QLearning(RLAgent):
                     avg_playtime += len(self.env.get_wrapper_attr("recorded_frames"))
 
                 if episode % val_every_ep == 0:
-                    avg_q_value = np.std(metric_logger.q_values[-_ * val_every_ep:])
-                    metric_logger.compute_log_metrics(avg_q_value, avg_playtime)
+                    avg_q_value = np.sum(metric_logger.q_values[-_ * val_every_ep:])
+                    metric_logger.compute_log_metrics(avg_q_value, avg_playtime/30)
                     q_values_current = avg_q_value
 
                     # Delta Q
