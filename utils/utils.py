@@ -38,6 +38,7 @@ class EarlyStopping:
                 return True
         else:
             self.best_value = delta_q
+            self.counter = 0
             self.save_checkpoint(delta_q, model, episode)
             self.trace_func(f"Delta Q improved from {self.best_value} to {delta_q}!")
         return False
