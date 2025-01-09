@@ -278,8 +278,7 @@ class DQN(RLAgent, nn.Module):
                     if processed_frames >= replay_start_size:
                         loss = self.optimize(target_q_network, batch_size)
                         pg_desc += f", Loss: {loss:.2f}"
-                        if loss is not None:
-                            avg_loss += loss
+                        avg_loss += loss
 
                         q_values_current = self.forward(
                             torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.dummy_param.device))
@@ -311,7 +310,8 @@ class DQN(RLAgent, nn.Module):
                     avg_q_value = self.calculate_avg_q_value()
                     metric_logger.q_values.append(avg_q_value)
 
-                    metric_logger.compute_log_metrics(avg_q_value, avg_playtime, avg_loss)
+                    metric_logger.compute_log_metrics(avg_q_value, avg_playtime,
+                                                      avg_loss if processed_frames >= replay_start_size else None)
                     avg_loss = 0
                     avg_reward = 0
 
