@@ -32,10 +32,10 @@ class ReplayMemory:
         self.held_out_ratio = held_out_ratio
 
     def push(self, *args):
-        self.memory.append(Transition(*args))
-
         if len(self.held_out_memory) < int((self.held_out_ratio * self.capacity)) and random.random() >= 0.5:
             self.held_out_memory.append(Transition(*args))
+        else:
+            self.memory.append(Transition(*args))
 
     def sample(self, batch_size):
         return random.sample(self.memory, batch_size)
@@ -237,7 +237,6 @@ def dq_learning(policy_network, target_network, n_episodes: int, val_every_ep: i
     metric_logger = MetricLogger(wandb_run, val_every_ep)
 
     processed_frames = 0
-    avg_reward = 0
     avg_loss = 0.0
     avg_playtime = 0
 
@@ -296,8 +295,6 @@ def dq_learning(policy_network, target_network, n_episodes: int, val_every_ep: i
             if processed_frames >= replay_start_size and policy_network.env.has_wrapper_attr("recorded_frames"):
                 avg_playtime += len(policy_network.env.get_wrapper_attr("recorded_frames")) / 30
 
-            avg_reward += score
-
             if episode % val_every_ep == 0:
                 avg_q_value = policy_network.calculate_avg_q_value(replay_memory)
                 metric_logger.q_values.append(avg_q_value)
@@ -305,7 +302,6 @@ def dq_learning(policy_network, target_network, n_episodes: int, val_every_ep: i
                 metric_logger.compute_log_metrics(avg_q_value, avg_playtime,
                                                   avg_loss if processed_frames >= replay_start_size else None)
                 avg_loss = 0
-                avg_reward = 0
                 avg_playtime = 0
 
                 # Delta Q

@@ -140,7 +140,7 @@ class MetricLogger:
         smoothed_avg_rewards = smooth_data(self.avg_rewards, window_size=10)
 
         episode_data = {
-            f"Avg Reward of {self.val_every_ep}": avg_reward / self.val_every_ep,
+            f"Avg Reward of {self.val_every_ep}": avg_reward,
             "Smoothed AvgReward": smoothed_avg_rewards[-1] if len(smoothed_avg_rewards) > 0 else 0,
             f"Avg Q (held-out) of {self.val_every_ep}:": avg_q_value,
             "WDCn": wdc_n,
