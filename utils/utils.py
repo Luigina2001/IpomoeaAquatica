@@ -23,21 +23,21 @@ class EarlyStopping:
 
     def __call__(self, delta_q, model, episode, video_path=None):
         if delta_q <= self.threshold:
-            self.trace_func(f"Delta Q reached converged!")
+            self.trace_func(f"\nDelta Q reached converged!")
             self.counter = 0
             self.save_checkpoint(delta_q, model, episode)
             return True
         elif delta_q >= self.best_value:
             self.counter += 1
             if video_path and os.path.exists(video_path):
-                self.trace_func(f"Removing video from episode {episode}: {video_path}")
+                self.trace_func(f"\nRemoving video from episode {episode}: {video_path}")
                 os.remove(video_path)
 
             if self.counter >= self.patience:
-                self.trace_func(f"Delta Q did not improve for {self.counter} episodes. Stopping...")
+                self.trace_func(f"\nDelta Q did not improve for {self.counter} episodes. Stopping...")
                 return True
         else:
-            self.trace_func(f"Delta Q improved from {self.best_value} to {delta_q}!")
+            self.trace_func(f"\nDelta Q improved from {self.best_value} to {delta_q}!")
             self.best_value = delta_q
             self.counter = 0
             self.save_checkpoint(delta_q, model, episode)

@@ -1,7 +1,9 @@
+import copy
 import os
 import time
 import yaml
 import torch
+
 import wandb
 import models
 import ale_py
@@ -10,6 +12,8 @@ import os.path as osp
 import gymnasium as gym
 
 from functools import partial
+
+from models.dqn import dq_learning
 from utils.functions import seed_everything
 from gymnasium.wrappers import RecordVideo
 from utils.constants import N_EPISODES, N_STEPS, PATIENCE
@@ -49,7 +53,6 @@ def train(args):
     os.makedirs(video_dir, exist_ok=True)
 
     agent_parameters = {
-        "env": env,
         "lr": args.lr,
         "gamma": args.gamma,
         "eps_start": args.eps_start,
@@ -73,15 +76,13 @@ def train(args):
         })
 
     elif agent_name == "DQN":
-        agent_parameters.update({
-            "memory_capacity": args.memory_capacity
-        })
-
         train_args.update({
             'batch_size': args.batch_size,
             'patience': args.patience,
             'replay_start_size': args.replay_start_size,
-            'target_update_freq': args.target_update_freq
+            'target_update_freq': args.target_update_freq,
+            "memory_capacity": args.memory_capacity,
+            "held_out_ratio": args.held_out_ratio
         })
 
     if args.tune_hyperparameters:
@@ -91,15 +92,19 @@ def train(args):
 
     agent = getattr(models, args.agent)(**agent_parameters)
 
+    agent.initialize_env(env)
+
     agent.env = RecordVideo(agent.env, episode_trigger=lambda t: t % args.val_every_ep == 0, video_folder=video_dir,
                             name_prefix=f"video_{agent_name}")
 
     if agent_name == "DQN":
-        device = torch.device(
-            "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
+        device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
         agent.to(device)
+        target_network = copy.deepcopy(agent)
+        dq_learning(target_network=target_network, policy_network=agent, **train_args)
 
-    agent.train_step(**train_args)
+    else:
+        agent.train_step(**train_args)
 
     if not args.no_log_to_wandb:
         run.finish()
@@ -171,6 +176,7 @@ def argument_parser():
                         help="Number of steps over which epsilon is decayed")
     parser.add_argument("--memory_capacity", type=int, default=1_000_000,
                         help="Capacity of the replay memory")
+    parser.add_argument("--noop_max", type=int, default=30)
     parser.add_argument("--replay_start_size", type=int, default=50_000,
                         help="Number of processed frames before learning")
     parser.add_argument("--held_out_ratio", type=float, default=0.1,

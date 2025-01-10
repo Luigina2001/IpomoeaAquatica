@@ -5,9 +5,9 @@ from abc import abstractmethod
 
 
 class RLAgent:
-    def __init__(self, env, lr, gamma, eps_start, eps_end, decay_steps, *args, **kwargs):
+    def __init__(self, lr, gamma, eps_start, eps_end, decay_steps, *args, **kwargs):
         self.lr = lr
-        self.env = env
+        self.env = None
         self.gamma = gamma
         self.eps = eps_start
         self.eps_end = eps_end
