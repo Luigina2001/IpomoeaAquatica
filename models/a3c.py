@@ -12,10 +12,11 @@ from gymnasium.wrappers import AtariPreprocessing, FrameStackObservation
 from utils.functions import seed_everything
 from .rl_agent import RLAgent
 
+
 # Based on: https://github.com/MorvanZhou/pytorch-A3C
 
 class Agent(nn.Module):
-    def __init__(self, n_channels: int, n_actions: int, lr: float, model_type: Literal['Actor', 'Critic']):
+    def __init__(self, n_channels: int, n_actions: int, model_type: Literal['Actor', 'Critic']):
         super().__init__()
 
         self.n_channels = n_channels
@@ -34,22 +35,14 @@ class Agent(nn.Module):
         self.lstm_cell = nn.LSTMCell(5184, 128)
 
         # TODO: critic should have 1 output unit for the value
-        self.out_layer = nn.Linear(128, self.n_actions)
 
         if self.model_type == 'Actor':
-            self.last_layer = nn.Softmax(dim=1)
+            self.out_layer = nn.Linear(128, self.n_actions)
+            self.softmax = nn.Softmax(dim=1)
         else:
-            self.last_layer = nn.Identity()
+            self.out_layer = nn.Linear(128, 1) # Value function
 
     def forward(self, x):
-        if self.model_type == 'Actor':
-            return self._actor_forward(x)
-        return self._critic_forward(x)
-
-    def _critic_forward(self, x):
-        pass
-
-    def _actor_forward(self, x):
         x = self.conv1(x)
 
         x = self.conv2(x)
@@ -59,16 +52,18 @@ class Agent(nn.Module):
         else:
             x = x.view(-1)
 
-        x = self.lstm_cell(x)
+        x = self.lstm_cell(x)[0]  # get hidden state
         x = self.out_layer(x)
-        x = self.last_layer(x)
+
+        if self.model_type == 'Actor':
+            x = self.softmax(x)
 
         return x
 
 
 class A3C(RLAgent, nn.Module, ABC):
-    def __init__(self, val_every_ep: int = 100, n_channels: int = 4, n_actions: int = 6, gamma: float = 0.99,
-                 lr: float = 0.0001, beta: float = 0.01, t_max: int = 5, n_threads: int = 4, eps_start: int = 1,
+    def __init__(self, n_channels: int = 4, n_actions: int = 6, gamma: float = 0.99,
+                 lr: float = 0.0001, beta: float = 0.01, eps_start: int = 1,
                  eps_end: int = 0.01, decay_steps: int = 1_000_000, frame_skip: int = 4):
 
         RLAgent.__init__(self, lr, gamma, eps_start, eps_end, decay_steps)
@@ -77,13 +72,10 @@ class A3C(RLAgent, nn.Module, ABC):
         self.n_actions = n_actions
         self.n_channels = n_channels
         self.beta = beta
-        self.t_max = t_max
-        self.n_threads = n_threads
         self.frame_skip = frame_skip
-        self.val_every_ep = val_every_ep
 
-        self.actor = Agent(n_channels=n_channels, n_actions=n_actions, lr=lr, model_type='Actor')
-        self.critic = Agent(n_channels=n_channels, n_actions=n_actions, lr=lr, model_type='Critic')
+        self.actor = Agent(n_channels=n_channels, n_actions=n_actions, model_type='Actor')
+        self.critic = Agent(n_channels=n_channels, n_actions=n_actions, model_type='Critic')
 
     def initialize_env(self, env, frame_skip=None):
         # disable frame skipping in original env if enabled
@@ -149,7 +141,7 @@ class A3C(RLAgent, nn.Module, ABC):
         for r, d in zip(reversed(rewards), reversed(dones)):
             R = r + self.gamma * R * (1 - d)
             returns.insert(0, R)
-        return torch.tensor(returns, dtype=torch.float32, device=self.dummy_param.device)
+        return torch.tensor(returns, dtype=torch.float32)
 
     def forward(self, x, value_only: bool = False):
         value = self.critic(x)
@@ -175,7 +167,10 @@ class Worker(mp.Process):
         self.seed = seed
         self.n_threads = n_threads
 
-        self.local_network = A3C(global_network.n_actions, global_network.n_channels, global_network.lr)
+        self.local_network = A3C(n_actions=global_network.n_actions, n_channels=global_network.n_channels,
+                                 eps_start=global_network.eps_start, eps_end=global_network.eps_end,
+                                 decay_steps=global_network.decay_steps, gamma=global_network.gamma,
+                                 frame_skip=global_network.frame_skip)
 
         # generate unique env for each process
         seed_everything(self.seed + self.rank)
@@ -210,12 +205,12 @@ class Worker(mp.Process):
     """
 
     def run(self):
-        print(f"Worker {self.rank} started. Current global episode: {self.global_episode}")
+        print(f"Worker {self.rank} started. Current global episode: {self.global_episode.value}")
 
         # Handle CPU Oversubscription: https://pytorch.org/docs/stable/notes/multiprocessing.html#cpu-oversubscription
         torch.set_num_threads(self.n_threads)
 
-        while self.global_episode < self.n_episodes:
+        while self.global_episode.value < self.n_episodes:
             """1. Reset gradients: dθ ← 0 and dθv ← 0"""
             rewards, log_probs, values, dones = [], [], [], []
             """2. Get state st"""
@@ -235,7 +230,7 @@ class Worker(mp.Process):
                 done = terminated or truncated
 
                 rewards.append(reward)
-                log_probs.append(torch.log(action_probs[action]))
+                log_probs.append(torch.log(action_probs[0, action]))
                 values.append(value.squeeze())
                 dones.append(done)
 

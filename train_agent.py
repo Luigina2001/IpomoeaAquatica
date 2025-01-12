@@ -1,6 +1,7 @@
 import copy
 import os
 import time
+from typing import Optional
 
 from torch import optim
 from torch.multiprocessing import Manager
@@ -92,9 +93,7 @@ def train(args):
 
     elif agent_name == "A3C":
         agent_parameters.update({
-            "tmax": args.tmax,
-            "beta": args.beta,
-            "n_threads": args.n_threads
+            "beta": args.beta
         })
 
     if args.tune_hyperparameters:
@@ -104,14 +103,17 @@ def train(args):
 
     if agent_name == "A3C":
         with Manager() as manager:
+            lr = agent_parameters["lr"]
+            del agent_parameters["lr"]
             global_network = A3C(**agent_parameters)
-            global_network.share_memory() # share parameters between processes
+            global_network.share_memory()  # share parameters between processes
             global_episode = manager.Value('i', 0)
             # TODO: Implementare ottimizzatore condiviso (non so se è necessario) https://discuss.pytorch.org/t/sharing-optimizer-between-processes/171/7
-            optimizer = optim.RMSprop(global_network.parameters(), lr=global_network.lr)
+            optimizer = optim.RMSprop(global_network.parameters(), lr=lr)
 
-            n_threads_per_worker = math.floor(args.n_workers / os.cpu_count())
-            workers = [Worker(global_network, optimizer, rank, args.max_steps, global_episode, args.n_episodes,
+            n_threads_per_worker = math.floor(
+                args.n_workers / args.n_vcpus) if args.n_threads is None else args.n_threads
+            workers = [Worker(global_network, optimizer, rank, args.n_steps, global_episode, args.n_episodes,
                               args.seed, n_threads_per_worker) for rank in range(args.n_workers)]
 
             [worker.start() for worker in workers]
@@ -219,7 +221,9 @@ def argument_parser():
     parser.add_argument("--epsilon", type=float, default=1e-3, help="Threshold for Q-values saturation")
     parser.add_argument("--tmax", type=int, default=20, help="Maximum steps for A3C updates")
     parser.add_argument("--beta", type=float, default=0.01, help="Entropy regularization factor")
-    parser.add_argument("--n_threads", type=int, default=os.cpu_count(), help="Number of threads for A3C")
+    parser.add_argument("--n_workers", type=float, default=os.cpu_count(), help="Number of workers for A3C")
+    parser.add_argument("--n_vcpus", type=int, default=os.cpu_count(), help="Number of vCPUS for A3C")
+    parser.add_argument("--n_threads", type=Optional[int], default=None, help="Number of threads for vCPUS for A3C")
 
     return parser
 
