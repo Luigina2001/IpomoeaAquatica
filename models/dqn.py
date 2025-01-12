@@ -157,7 +157,9 @@ class DQN(RLAgent, nn.Module):
 
     @classmethod
     def load_model(cls, env, checkpoint_path: str, return_params: bool = False):
-        model_state_dict = torch.load(checkpoint_path)
+        device = torch.device("cuda" if torch.cuda.is_available()
+                              else ("mps" if torch.backends.mps.is_available() else "cpu"))
+        model_state_dict = torch.load(checkpoint_path, map_location=device)
 
         instance = cls(**model_state_dict['std_parameters'])
         del model_state_dict['std_parameters']

@@ -13,6 +13,8 @@ __pycache__/
 .vscode-test
 *.code-workspace
 
+evaluation_dir/
+
 video
 
 .venv
