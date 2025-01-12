@@ -173,6 +173,16 @@ class MetricLogger:
 
             plt.close()
 
+    def log_thread_rewards(self, thread_rewards, n_threads):
+        if self.wandb_run is None:
+            return
+
+        avg_reward = sum(thread_rewards) / n_threads
+        summary_data = {f"Avg Reward of {n_threads} threads": avg_reward}
+
+        self.wandb_run.log(summary_data)
+
+
     def log_final_metrics(self, episode, convergence_steps, figsize=(12, 8)):
         if self.wandb_run is None:
             return

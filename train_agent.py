@@ -14,6 +14,7 @@ import gymnasium as gym
 from functools import partial
 
 from models.dqn import dq_learning
+from models.A3C import a3c_learning
 from utils.functions import seed_everything
 from gymnasium.wrappers import RecordVideo
 from utils.constants import N_EPISODES, N_STEPS, PATIENCE
@@ -62,17 +63,16 @@ def train(args):
 
     train_args = {
         "n_episodes": args.n_episodes,
-        "max_steps": args.n_steps,
         "wandb_run": run,
         "video_dir": video_dir,
         "checkpoint_dir": experiment_dir,
-        "val_every_ep": args.val_every_ep,
-        "epsilon": args.epsilon
+        "val_every_ep": args.val_every_ep
     }
 
     if agent_name == "QLearning":
         agent_parameters.update({
-            'normalize_reward': args.normalize_reward
+            'normalize_reward': args.normalize_reward,
+            "max_steps": args.n_steps
         })
 
     elif agent_name == "DQN":
@@ -82,7 +82,16 @@ def train(args):
             'replay_start_size': args.replay_start_size,
             'target_update_freq': args.target_update_freq,
             "memory_capacity": args.memory_capacity,
-            "held_out_ratio": args.held_out_ratio
+            "held_out_ratio": args.held_out_ratio,
+            "epsilon": args.epsilon,
+            "max_steps": args.n_steps,
+        })
+
+    elif agent_name == "A3C":
+        agent_parameters.update({
+            "tmax": args.tmax,
+            "beta": args.beta,
+            "n_threads": args.n_threads
         })
 
     if args.tune_hyperparameters:
@@ -98,10 +107,21 @@ def train(args):
                             name_prefix=f"video_{agent_name}")
 
     if agent_name == "DQN":
-        device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
+        device = torch.device("cuda" if torch.cuda.is_available()
+                              else ("mps" if torch.backends.mps.is_available()
+                                    else "cpu")
+                              )
         agent.to(device)
         target_network = copy.deepcopy(agent)
         dq_learning(target_network=target_network, policy_network=agent, **train_args)
+
+    elif agent_name == "A3C":
+        device = torch.device("cuda" if torch.cuda.is_available()
+                              else ("mps" if torch.backends.mps.is_available()
+                                    else "cpu")
+                              )
+        agent.to(device)
+        a3c_learning(network=agent, **train_args)
 
     else:
         agent.train_step(**train_args)
@@ -157,7 +177,7 @@ def argument_parser():
                         default=osp.join(os.getcwd(), "experiments"))
     parser.add_argument("--checkpoint_path", type=str, default=None)
     parser.add_argument("--agent", type=str, default="DQN",
-                        choices=["QLearning", "DQN"])
+                        choices=["QLearning", "DQN", "A3C"])
     parser.add_argument("--every_visit", action="store_true", default=False,
                         help="Boolean to discern between first-visit and every-visit Monte Carlo methods")
     parser.add_argument("--batch_size", type=int, default=32,
@@ -182,6 +202,9 @@ def argument_parser():
     parser.add_argument("--held_out_ratio", type=float, default=0.1,
                         help="Probability of putting a state into the hold-out set in the DQN class")
     parser.add_argument("--epsilon", type=float, default=1e-3, help="Threshold for Q-values saturation")
+    parser.add_argument("--tmax", type=int, default=20, help="Maximum steps for A3C updates")
+    parser.add_argument("--beta", type=float, default=0.01, help="Entropy regularization factor")
+    parser.add_argument("--n_threads", type=int, default=os.cpu_count(), help="Number of threads for A3C")
 
     return parser
 
