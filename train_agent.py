@@ -1,6 +1,10 @@
 import copy
 import os
 import time
+
+from torch import optim
+from torch.multiprocessing import Manager
+
 import yaml
 import torch
 
@@ -10,11 +14,12 @@ import ale_py
 import argparse
 import os.path as osp
 import gymnasium as gym
+import math
 
 from functools import partial
 
 from models.dqn import dq_learning
-from models.A3C import a3c_learning
+from models.a3c import A3C, Worker
 from utils.functions import seed_everything
 from gymnasium.wrappers import RecordVideo
 from utils.constants import N_EPISODES, N_STEPS, PATIENCE
@@ -47,8 +52,6 @@ def train(args):
             osp.join(experiment_dir if experiment_dir else args.experiment_dir, str(time.time())))
 
     os.makedirs(experiment_dir, exist_ok=True)
-
-    env = gym.make("ALE/SpaceInvaders-v5", render_mode="rgb_array")
 
     video_dir = os.path.join(experiment_dir, f"video/")
     os.makedirs(video_dir, exist_ok=True)
@@ -99,32 +102,44 @@ def train(args):
         agent_parameters["gamma"] = wandb.config['gamma']
         agent_parameters["eps_start"] = wandb.config['eps_start']
 
-    agent = getattr(models, args.agent)(**agent_parameters)
+    if agent_name == "A3C":
+        with Manager() as manager:
+            global_network = A3C(**agent_parameters)
+            global_network.share_memory() # share parameters between processes
+            global_episode = manager.Value('i', 0)
+            # TODO: Implementare ottimizzatore condiviso (non so se è necessario) https://discuss.pytorch.org/t/sharing-optimizer-between-processes/171/7
+            optimizer = optim.RMSprop(global_network.parameters(), lr=global_network.lr)
 
-    agent.initialize_env(env)
+            n_threads_per_worker = math.floor(args.n_workers / os.cpu_count())
+            workers = [Worker(global_network, optimizer, rank, args.max_steps, global_episode, args.n_episodes,
+                              args.seed, n_threads_per_worker) for rank in range(args.n_workers)]
 
-    agent.env = RecordVideo(agent.env, episode_trigger=lambda t: t % args.val_every_ep == 0, video_folder=video_dir,
-                            name_prefix=f"video_{agent_name}")
+            [worker.start() for worker in workers]
 
-    if agent_name == "DQN":
-        device = torch.device("cuda" if torch.cuda.is_available()
-                              else ("mps" if torch.backends.mps.is_available()
-                                    else "cpu")
-                              )
-        agent.to(device)
-        target_network = copy.deepcopy(agent)
-        dq_learning(target_network=target_network, policy_network=agent, **train_args)
+            # TODO: Implementare il tracking delle metriche
 
-    elif agent_name == "A3C":
-        device = torch.device("cuda" if torch.cuda.is_available()
-                              else ("mps" if torch.backends.mps.is_available()
-                                    else "cpu")
-                              )
-        agent.to(device)
-        a3c_learning(network=agent, **train_args)
+            [worker.join() for worker in workers]
 
     else:
-        agent.train_step(**train_args)
+        env = gym.make("ALE/SpaceInvaders-v5", render_mode="rgb_array")
+
+        agent = getattr(models, args.agent)(**agent_parameters)
+
+        agent.initialize_env(env)
+
+        agent.env = RecordVideo(agent.env, episode_trigger=lambda t: t % args.val_every_ep == 0, video_folder=video_dir,
+                                name_prefix=f"video_{agent_name}")
+
+        if agent_name == "DQN":
+            device = torch.device("cuda" if torch.cuda.is_available()
+                                  else ("mps" if torch.backends.mps.is_available()
+                                        else "cpu")
+                                  )
+            agent.to(device)
+            target_network = copy.deepcopy(agent)
+            dq_learning(target_network=target_network, policy_network=agent, **train_args)
+        else:
+            agent.train_step(**train_args)
 
     if not args.no_log_to_wandb:
         run.finish()
