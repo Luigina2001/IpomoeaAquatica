@@ -85,6 +85,8 @@ class QLearning(RLAgent):
         instance.normalize_reward = model_state["extra_parameters"]["normalize_reward"]
         instance.noop_max = model_state["noop_max"]["noop_max"]
 
+        instance.initialize_env(env)
+
         if return_params:
             return instance, model_state
         return instance
