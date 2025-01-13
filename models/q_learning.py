@@ -17,29 +17,33 @@ def init_q_table():
 
 
 class QLearning(RLAgent):
-    def __init__(self, env, lr, gamma, eps_start, eps_end, decay_steps, normalize_reward: bool = False, *args,
+    def __init__(self, lr, gamma, eps_start, eps_end, decay_steps, normalize_reward: bool = False, noop_max: int = 30,
+                 *args,
                  **kwargs):
-        super().__init__(env, lr, gamma, eps_start, eps_end, decay_steps, *args, **kwargs)
+        super().__init__(lr, gamma, eps_start, eps_end, decay_steps, *args, **kwargs)
 
         self.q_table = defaultdict(init_q_table)
+        self.noop_max = noop_max
         self.normalize_reward = normalize_reward
 
-        self.initialize_env()
-
-    def initialize_env(self):
+    def initialize_env(self, env):
         # disable frame skipping in original env if enabled
-        if self.env.unwrapped._frameskip > 1:
-            self.env.unwrapped._frameskip = 3
+        if env.unwrapped._frameskip > 1:
+            env.unwrapped._frameskip = 3
 
-        self.env = Reward(self.env, normalize_reward=self.normalize_reward)
-        self.env = Observation(self.env)
-        self.env = Action(self.env)
+        env = Reward(env, normalize_reward=self.normalize_reward)
+        env = Observation(env)
+        self.env = Action(env)
 
     def serialize(self):
         model_state = super().serialize()
 
         model_state.update({
-            'extra_parameters': {'q_table': self.q_table, 'normalize_reward': self.normalize_reward}
+            'extra_parameters': {
+                'q_table': self.q_table,
+                'normalize_reward': self.normalize_reward,
+                'noop_max': self.noop_max
+            }
         })
 
         return model_state
@@ -66,7 +70,7 @@ class QLearning(RLAgent):
         if max_q != float("-inf"):
             if best_action == 0:
                 self.count_noop += 1
-            if self.count_noop == 10:
+            if self.count_noop == self.noop_max:
                 self.count_noop = 0
                 best_action = np.random.choice([1, 2, 3, 4, 5])
             return int(best_action)
@@ -79,6 +83,7 @@ class QLearning(RLAgent):
 
         instance.q_table = model_state["extra_parameters"]["q_table"]
         instance.normalize_reward = model_state["extra_parameters"]["normalize_reward"]
+        instance.noop_max = model_state["noop_max"]["noop_max"]
 
         if return_params:
             return instance, model_state
@@ -123,7 +128,7 @@ class QLearning(RLAgent):
                                 for a in range(self.env.action_space.n))
 
                     self.q_table[(enc_state, action)] = self.q_table[(enc_state, action)] + self.lr * (
-                                reward_info['reward'] + self.gamma * max_q - self.q_table[(enc_state, action)])
+                            reward_info['reward'] + self.gamma * max_q - self.q_table[(enc_state, action)])
                     metric_logger.q_values.append(self.q_table[(enc_state, action)])
 
                     processed_frames += 1
@@ -153,7 +158,7 @@ class QLearning(RLAgent):
 
                 if episode % val_every_ep == 0:
                     avg_q_value = np.sum(metric_logger.q_values[-_ * val_every_ep:])
-                    metric_logger.compute_log_metrics(avg_q_value, avg_playtime/30)
+                    metric_logger.compute_log_metrics(avg_q_value, avg_playtime / 30)
                     q_values_current = avg_q_value
 
                     # Delta Q
