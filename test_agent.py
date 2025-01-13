@@ -1,3 +1,4 @@
+import json
 import os
 import torch
 import ale_py
@@ -11,6 +12,8 @@ from gymnasium.wrappers import RecordVideo
 import models
 import time
 from utils.constants import N_EPISODES, N_STEPS
+
+from tqdm import tqdm
 
 from utils.functions import seed_everything
 
@@ -50,47 +53,66 @@ def test(args):
     total_scores = []
     avg_playtime = 0
     total_steps = 0
-    for episode in range(args.n_episodes):
-        done = False
-        current_state, _ = agent.env.reset()
-        cumulative_reward = 0
-        reward = 0
-        score = 0
-        steps = 0
-        while not done and steps < args.n_steps:
-            action = agent.policy(current_state)
-            next_state, score_info, terminated, truncated, _ = agent.env.step(action)
-            done = terminated or truncated
+    with tqdm(range(args.n_episodes)) as pg_bar:
+        for episode in pg_bar:
+            done = False
+            current_state, _ = agent.env.reset()
+            cumulative_reward = 0
+            reward = 0
+            score = 0
+            steps = 0
+            while not done and steps < args.n_steps:
+                action = agent.policy(current_state)
+                next_state, score_info, terminated, truncated, _ = agent.env.step(action)
+                done = terminated or truncated
 
-            if isinstance(score_info, dict):
-                reward = score_info['reward']
-                score = score_info['score']
-            else:
-                reward = score_info
-                score = reward
+                if isinstance(score_info, dict):
+                    reward = score_info['reward']
+                    score = score_info['score']
+                else:
+                    reward = score_info
+                    score = reward
 
-            cumulative_reward += reward
-            current_state = next_state
-            steps += 1
+                cumulative_reward += reward
+                current_state = next_state
+                steps += 1
 
-        total_steps += steps
+                pg_bar.set_description(f"Episode {episode + 1}: Steps: {steps}, Total Reward: {cumulative_reward} --- Game Score: {score}")
 
-        if agent.env.recorded_frames:
-            avg_playtime += len(agent.env.recorded_frames)
+            total_steps += steps
 
-        if args.agent == "DQN":
-            score = cumulative_reward
+            if agent.env.recorded_frames:
+                avg_playtime += len(agent.env.recorded_frames)
 
-        print(f"Episode {episode + 1}: Total Reward: {cumulative_reward} --- Game Score: {score}")
-        total_rewards.append(cumulative_reward)
-        total_scores.append(score)
+            if args.agent == "DQN":
+                score = cumulative_reward
 
-        avg_playtime /= args.n_episodes
+            total_rewards.append(cumulative_reward)
+            total_scores.append(score)
 
-    print(f"Average Reward: {sum(total_rewards) / len(total_rewards)}")
-    print(f"Average Game Score: {sum(total_scores) / args.n_episodes}")
-    print(f"Average Playtime: {avg_playtime}")
-    print(f"Steps: {total_steps}")
+    avg_playtime /= args.n_episodes
+
+    # Compute final metrics
+    metrics = {
+        "average_reward": sum(total_rewards) / len(total_rewards),
+        "average_game_score": sum(total_scores) / args.n_episodes,
+        "average_playtime": avg_playtime,
+        "total_steps": total_steps,
+        "total_rewards": total_rewards,
+        "total_scores": total_scores
+    }
+
+    # Print metrics
+    print(f"Average Reward: {metrics['average_reward']}")
+    print(f"Average Game Score: {metrics['average_game_score']}")
+    print(f"Average Playtime: {metrics['average_playtime']}")
+    print(f"Steps: {metrics['total_steps']}")
+
+    # Save metrics to JSON file
+    metrics_file = os.path.join(evaluation_dir, "metrics.json")
+    with open(metrics_file, "w") as f:
+        json.dump(metrics, f, indent=4)
+    print(f"Metrics saved to {metrics_file}")
 
 
 def argument_parser():

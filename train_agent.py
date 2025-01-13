@@ -1,6 +1,11 @@
 import copy
 import os
 import time
+from typing import Optional
+
+from torch import optim
+from torch.multiprocessing import Manager
+
 import yaml
 import torch
 
@@ -10,10 +15,12 @@ import ale_py
 import argparse
 import os.path as osp
 import gymnasium as gym
+import math
 
 from functools import partial
 
 from models.dqn import dq_learning
+from models.a3c import A3C, Worker
 from utils.functions import seed_everything
 from gymnasium.wrappers import RecordVideo
 from utils.constants import N_EPISODES, N_STEPS, PATIENCE
@@ -47,8 +54,6 @@ def train(args):
 
     os.makedirs(experiment_dir, exist_ok=True)
 
-    env = gym.make("ALE/SpaceInvaders-v5", render_mode="rgb_array")
-
     video_dir = os.path.join(experiment_dir, f"video/")
     os.makedirs(video_dir, exist_ok=True)
 
@@ -62,17 +67,16 @@ def train(args):
 
     train_args = {
         "n_episodes": args.n_episodes,
-        "max_steps": args.n_steps,
         "wandb_run": run,
         "video_dir": video_dir,
         "checkpoint_dir": experiment_dir,
-        "val_every_ep": args.val_every_ep,
-        "epsilon": args.epsilon
+        "val_every_ep": args.val_every_ep
     }
 
     if agent_name == "QLearning":
         agent_parameters.update({
-            'normalize_reward': args.normalize_reward
+            'normalize_reward': args.normalize_reward,
+            "max_steps": args.n_steps
         })
 
     elif agent_name == "DQN":
@@ -82,7 +86,14 @@ def train(args):
             'replay_start_size': args.replay_start_size,
             'target_update_freq': args.target_update_freq,
             "memory_capacity": args.memory_capacity,
-            "held_out_ratio": args.held_out_ratio
+            "held_out_ratio": args.held_out_ratio,
+            "epsilon": args.epsilon,
+            "max_steps": args.n_steps,
+        })
+
+    elif agent_name == "A3C":
+        agent_parameters.update({
+            "beta": args.beta
         })
 
     if args.tune_hyperparameters:
@@ -90,21 +101,47 @@ def train(args):
         agent_parameters["gamma"] = wandb.config['gamma']
         agent_parameters["eps_start"] = wandb.config['eps_start']
 
-    agent = getattr(models, args.agent)(**agent_parameters)
+    if agent_name == "A3C":
+        with Manager() as manager:
+            lr = agent_parameters["lr"]
+            del agent_parameters["lr"]
+            global_network = A3C(**agent_parameters)
+            global_network.share_memory()  # share parameters between processes
+            global_episode = manager.Value('i', 0)
+            # TODO: Implementare ottimizzatore condiviso (non so se è necessario) https://discuss.pytorch.org/t/sharing-optimizer-between-processes/171/7
+            optimizer = optim.RMSprop(global_network.parameters(), lr=lr)
 
-    agent.initialize_env(env)
+            n_threads_per_worker = math.floor(
+                args.n_workers / args.n_vcpus) if args.n_threads is None else args.n_threads
+            workers = [Worker(global_network, optimizer, rank, args.n_steps, global_episode, args.n_episodes,
+                              args.seed, n_threads_per_worker) for rank in range(args.n_workers)]
 
-    agent.env = RecordVideo(agent.env, episode_trigger=lambda t: t % args.val_every_ep == 0, video_folder=video_dir,
-                            name_prefix=f"video_{agent_name}")
+            [worker.start() for worker in workers]
 
-    if agent_name == "DQN":
-        device = torch.device("cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
-        agent.to(device)
-        target_network = copy.deepcopy(agent)
-        dq_learning(target_network=target_network, policy_network=agent, **train_args)
+            # TODO: Implementare il tracking delle metriche
+
+            [worker.join() for worker in workers]
 
     else:
-        agent.train_step(**train_args)
+        env = gym.make("ALE/SpaceInvaders-v5", render_mode="rgb_array")
+
+        agent = getattr(models, args.agent)(**agent_parameters)
+
+        agent.initialize_env(env)
+
+        agent.env = RecordVideo(agent.env, episode_trigger=lambda t: t % args.val_every_ep == 0, video_folder=video_dir,
+                                name_prefix=f"video_{agent_name}")
+
+        if agent_name == "DQN":
+            device = torch.device("cuda" if torch.cuda.is_available()
+                                  else ("mps" if torch.backends.mps.is_available()
+                                        else "cpu")
+                                  )
+            agent.to(device)
+            target_network = copy.deepcopy(agent)
+            dq_learning(target_network=target_network, policy_network=agent, **train_args)
+        else:
+            agent.train_step(**train_args)
 
     if not args.no_log_to_wandb:
         run.finish()
@@ -157,7 +194,7 @@ def argument_parser():
                         default=osp.join(os.getcwd(), "experiments"))
     parser.add_argument("--checkpoint_path", type=str, default=None)
     parser.add_argument("--agent", type=str, default="DQN",
-                        choices=["QLearning", "DQN"])
+                        choices=["QLearning", "DQN", "A3C"])
     parser.add_argument("--every_visit", action="store_true", default=False,
                         help="Boolean to discern between first-visit and every-visit Monte Carlo methods")
     parser.add_argument("--batch_size", type=int, default=32,
@@ -182,6 +219,11 @@ def argument_parser():
     parser.add_argument("--held_out_ratio", type=float, default=0.1,
                         help="Probability of putting a state into the hold-out set in the DQN class")
     parser.add_argument("--epsilon", type=float, default=1e-3, help="Threshold for Q-values saturation")
+    parser.add_argument("--tmax", type=int, default=20, help="Maximum steps for A3C updates")
+    parser.add_argument("--beta", type=float, default=0.01, help="Entropy regularization factor")
+    parser.add_argument("--n_workers", type=float, default=os.cpu_count(), help="Number of workers for A3C")
+    parser.add_argument("--n_vcpus", type=int, default=os.cpu_count(), help="Number of vCPUS for A3C")
+    parser.add_argument("--n_threads", type=Optional[int], default=None, help="Number of threads for vCPUS for A3C")
 
     return parser
 
