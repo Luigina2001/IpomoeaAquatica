@@ -41,7 +41,7 @@ class Agent(nn.Module):
             self.out_layer = nn.Linear(128, self.n_actions)
             self.softmax = nn.Softmax(dim=1)
         else:
-            self.out_layer = nn.Linear(128, 1) # Value function
+            self.out_layer = nn.Linear(128, 1)  # Value function
 
     def forward(self, x):
         x = self.conv1(x)
@@ -156,7 +156,8 @@ class A3C(RLAgent, nn.Module, ABC):
 
 
 class Worker(mp.Process):
-    def __init__(self, global_network, optimizer, queue, condition, rank, t_max, global_episode, n_episodes, seed, n_threads, val_every_ep):
+    def __init__(self, global_network, optimizer, queue, condition, stop_signal, rank, t_max, global_episode,
+                 n_episodes, seed, n_threads, val_every_ep):
         super(Worker, self).__init__()
 
         self.global_network = global_network
@@ -165,6 +166,7 @@ class Worker(mp.Process):
         self.rank = rank
         self.queue = queue
         self.condition = condition
+        self.stop_signal = stop_signal
 
         self.global_episode = global_episode
         self.n_episodes = n_episodes + 1
@@ -211,12 +213,13 @@ class Worker(mp.Process):
 
     def run(self):
         pid = os.getpid()
-        print(f"Worker {self.rank} started. - PID: {pid} Current global episode: {self.global_episode.value}", flush=True)
+        print(f"Worker {self.rank} started. - PID: {pid} Current global episode: {self.global_episode.value}",
+              flush=True)
 
         # Handle CPU Oversubscription: https://pytorch.org/docs/stable/notes/multiprocessing.html#cpu-oversubscription
         torch.set_num_threads(self.n_threads)
 
-        while self.global_episode.value < self.n_episodes:
+        while self.global_episode.value < self.n_episodes and not self.stop_signal.value:
 
             """1. Reset gradients: dθ ← 0 and dθv ← 0"""
             rewards, log_probs, values, dones = [], [], [], []
@@ -246,7 +249,8 @@ class Worker(mp.Process):
                     values.append(value.squeeze())
                     dones.append(done)
 
-                    pg_bar.set_description(f"Worker {self.rank} - Global episode: {self.global_episode.value} - Step: {t + 1}/{self.t_max}, Reward: {reward}")
+                    pg_bar.set_description(
+                        f"Worker {self.rank} - Global episode: {self.global_episode.value} - Step: {t + 1}/{self.t_max}, Reward: {reward}")
 
                     if done:
                         break
@@ -280,7 +284,8 @@ class Worker(mp.Process):
             self.local_network.load_state_dict(self.global_network.state_dict())
 
             if self.global_episode.value % self.val_every_ep == 0:
-                print(f"Worker {self.rank} - Global episode: {self.global_episode.value} - Loss: {loss.item():.2f}", flush=True)
+                print(f"Worker {self.rank} - Global episode: {self.global_episode.value} - Loss: {loss.item():.2f}",
+                      flush=True)
 
             # notify main process that the episode has ended
             self.queue.put(self.rank)

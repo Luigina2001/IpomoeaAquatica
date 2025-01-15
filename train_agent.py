@@ -22,8 +22,8 @@ from functools import partial
 
 from models.dqn import dq_learning
 from models.a3c import A3C, Worker
-from utils import MetricLogger
-from utils.functions import seed_everything
+from utils import MetricLogger, EarlyStopping
+from utils.functions import seed_everything, handle_video
 from gymnasium.wrappers import RecordVideo
 from utils.constants import N_EPISODES, N_STEPS, PATIENCE
 
@@ -113,19 +113,29 @@ def train(args):
             del agent_parameters["lr"]
             global_network = A3C(**agent_parameters)
             global_network.initialize_env(env)
+            global_network.env = RecordVideo(global_network.env, episode_trigger=lambda t: t % args.val_every_ep == 0,
+                                             video_folder=video_dir,
+                                             name_prefix=f"video_{agent_name}")
             global_network.share_memory()  # share parameters between processes
             global_episode = Value('i', 1)
+            stop_signal = Value('b', False)
             optimizer = optim.RMSprop(global_network.parameters(), lr=lr)
             queue = Queue()
             condition = Condition()
+
+            metric_logger = MetricLogger(run, args.val_every_ep)
+            early_stopping = EarlyStopping(float('-inf'), experiment_dir, patience=args.patience)
+            stop_training = False
 
             n_threads_per_worker = math.floor(
                 args.n_workers / args.n_vcpus) if args.n_threads is None else args.n_threads
 
             print(f"\n====\nStarting A3C training with {args.n_workers} workers...\n====\n")
 
-            workers = [Worker(global_network, optimizer, queue, condition, rank, args.n_steps, global_episode, args.n_episodes,
-                              args.seed, n_threads_per_worker, args.val_every_ep) for rank in range(args.n_workers)]
+            workers = [
+                Worker(global_network, optimizer, queue, condition, stop_signal, rank, args.n_steps, global_episode,
+                       args.n_episodes,
+                       args.seed, n_threads_per_worker, args.val_every_ep) for rank in range(args.n_workers)]
 
             [worker.start() for worker in workers]
 
@@ -139,12 +149,18 @@ def train(args):
 
                 with condition:
                     if global_episode.value % args.val_every_ep == 0:
-                        print(f"\n\n====\nMain process: Starting validation for episode {global_episode.value}\n====\n\n")
+                        print(
+                            f"\n\n====\nMain process: Starting validation for episode {global_episode.value}\n====\n\n")
 
                         global_network.eval()
 
+                        if global_network.eps > 0:
+                            global_network.eps = 0
+
                         rewards, log_probs, values, dones = [], [], [], []
                         state, _ = global_network.env.reset()
+
+                        video_path = handle_video(video_dir, global_episode.value, prefix="A3C")
 
                         with tqdm(range(args.n_steps)) as pg_bar:
                             for t in pg_bar:
@@ -178,24 +194,37 @@ def train(args):
                             entropy_loss = global_network.beta * entropy
 
                             loss = policy_loss + value_loss + entropy_loss
-                            print("Loss: ", loss)
+
+                            metric_logger.raw_rewards = rewards
+
+                            metric_logger.compute_log_metrics(None, None, loss.item())
 
                             global_network.train()
+
+                            stop_training = early_stopping(loss.item(), global_network, global_episode.value,
+                                                           video_path=video_path)
 
                     # Increment global counter
                     with global_episode.get_lock():
                         global_episode.value += 1
-                        print(f"\n\n====\nMain process incremented global episode counter: {global_episode.value}\n====\n\n")
+                        stop_training = stop_training or global_episode.value >= args.n_episodes
+
+                        with stop_signal.get_lock():
+                            stop_signal.value = stop_training
+
+                        if not stop_training:
+                            print(
+                                f"\n\n====\nMain process incremented global episode counter: {global_episode.value}\n====\n\n")
 
                     condition.notify_all()
 
                 # If all episodes are done, exit
-                if global_episode.value >= args.n_episodes:
+                if stop_training:
                     break
 
-            # TODO: Implementare il tracking delle metriche
-
             [worker.join() for worker in workers]
+
+            metric_logger.log_final_metrics(global_episode.value)
 
             print(f"\n\n====\nA3C training finished!\n====\n")
     else:

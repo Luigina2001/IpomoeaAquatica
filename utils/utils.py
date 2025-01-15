@@ -136,17 +136,21 @@ class MetricLogger:
         mmavg = (max(self.raw_rewards[-self.val_every_ep:]) - min(self.raw_rewards[-self.val_every_ep:])) / avg_reward
         self.mmavg_values.append(mmavg)
 
-        # Smoothed Avg Rewards
-        smoothed_avg_rewards = smooth_data(self.avg_rewards, window_size=10)
 
         episode_data = {
             f"Avg Reward of {self.val_every_ep}": avg_reward,
-            "Smoothed AvgReward": smoothed_avg_rewards[-1] if len(smoothed_avg_rewards) > 0 else 0,
-            f"Avg Q (held-out) of {self.val_every_ep}:": avg_q_value,
             "WDCn": wdc_n,
             "WDCp": wdc_p,
             "MMAVG": mmavg if len(self.mmavg_values) > 0 else 0,
         }
+
+        if avg_q_value is not None:
+            episode_data.update({"Avg Q Value": avg_q_value})
+
+        # Smoothed Avg Rewards
+        if len(self.avg_rewards) > 0:
+            smoothed_avg_rewards = smooth_data(self.avg_rewards, window_size=10)
+            episode_data.update({"Smoothed AvgReward": smoothed_avg_rewards[-1] if len(smoothed_avg_rewards) > 0 else 0})
 
         if avg_playtime is not None and avg_playtime > 0:
             episode_data.update({f"Avg Playtime of {self.val_every_ep}": avg_playtime // self.val_every_ep})
@@ -183,11 +187,15 @@ class MetricLogger:
         self.wandb_run.log(summary_data)
 
 
-    def log_final_metrics(self, episode, convergence_steps, figsize=(12, 8)):
+    def log_final_metrics(self, episode, convergence_steps=None, figsize=(12, 8)):
         if self.wandb_run is None:
             return
 
-        summary_data = {"Convergence Steps": convergence_steps}
+
+        summary_data = {}
+
+        if convergence_steps is not None:
+            summary_data.update({"Convergence Steps": convergence_steps})
 
         if len(self.q_values):
             q_min = min(self.q_values)
