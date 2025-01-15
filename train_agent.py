@@ -4,10 +4,11 @@ import time
 from typing import Optional
 
 from torch import optim
-from torch.multiprocessing import Manager
+from torch.multiprocessing import Manager, Queue, Value, Condition
 
 import yaml
 import torch
+from tqdm import tqdm
 
 import wandb
 import models
@@ -21,9 +22,12 @@ from functools import partial
 
 from models.dqn import dq_learning
 from models.a3c import A3C, Worker
+from utils import MetricLogger
 from utils.functions import seed_everything
 from gymnasium.wrappers import RecordVideo
 from utils.constants import N_EPISODES, N_STEPS, PATIENCE
+
+import torch.nn.functional as F
 
 gym.register_envs(ale_py)
 
@@ -101,30 +105,100 @@ def train(args):
         agent_parameters["gamma"] = wandb.config['gamma']
         agent_parameters["eps_start"] = wandb.config['eps_start']
 
+    env = gym.make("ALE/SpaceInvaders-v5", render_mode="rgb_array")
+
     if agent_name == "A3C":
-        with Manager() as manager:
+        with Manager() as _:
             lr = agent_parameters["lr"]
             del agent_parameters["lr"]
             global_network = A3C(**agent_parameters)
+            global_network.initialize_env(env)
             global_network.share_memory()  # share parameters between processes
-            global_episode = manager.Value('i', 0)
-            # TODO: Implementare ottimizzatore condiviso (non so se è necessario) https://discuss.pytorch.org/t/sharing-optimizer-between-processes/171/7
+            global_episode = Value('i', 1)
             optimizer = optim.RMSprop(global_network.parameters(), lr=lr)
+            queue = Queue()
+            condition = Condition()
 
             n_threads_per_worker = math.floor(
                 args.n_workers / args.n_vcpus) if args.n_threads is None else args.n_threads
-            workers = [Worker(global_network, optimizer, rank, args.n_steps, global_episode, args.n_episodes,
-                              args.seed, n_threads_per_worker) for rank in range(args.n_workers)]
+
+            print(f"\n====\nStarting A3C training with {args.n_workers} workers...\n====\n")
+
+            workers = [Worker(global_network, optimizer, queue, condition, rank, args.n_steps, global_episode, args.n_episodes,
+                              args.seed, n_threads_per_worker, args.val_every_ep) for rank in range(args.n_workers)]
 
             [worker.start() for worker in workers]
+
+            # Main loop for managing episode counter
+            while True:
+                # Collect messages from workers
+                messages = set()
+                while len(messages) < args.n_workers:
+                    worker_id = queue.get()
+                    messages.add(worker_id)
+
+                with condition:
+                    if global_episode.value % args.val_every_ep == 0:
+                        print(f"\n\n====\nMain process: Starting validation for episode {global_episode.value}\n====\n\n")
+
+                        global_network.eval()
+
+                        rewards, log_probs, values, dones = [], [], [], []
+                        state, _ = global_network.env.reset()
+
+                        with tqdm(range(args.n_steps)) as pg_bar:
+                            for t in pg_bar:
+                                state_tensor = torch.FloatTensor(state).unsqueeze(0)
+                                action_probs, value = global_network(state_tensor)
+                                action = global_network.policy(state)
+
+                                next_state, reward, terminated, truncated, _ = global_network.env.step(action)
+                                done = terminated or truncated
+
+                                rewards.append(reward)
+                                log_probs.append(torch.log(action_probs[0, action]))
+                                values.append(value.squeeze())
+                                dones.append(done)
+
+                                pg_bar.set_description(
+                                    f"Main thread - Global episode: {global_episode.value} - Step: {t + 1}/{args.n_steps}, Reward: {reward}")
+
+                                if done:
+                                    break
+
+                                state = next_state
+
+                            next_value = 0 if done else global_network.critic(torch.FloatTensor(state).unsqueeze(0))
+                            returns = global_network.compute_returns(rewards, next_value, dones)
+
+                            advantages = returns - torch.stack(values)
+                            policy_loss = -(torch.stack(log_probs) * advantages).mean()
+                            value_loss = F.mse_loss(torch.stack(values), returns, reduction='mean')
+                            entropy = -1 * (action_probs * torch.log(action_probs)).sum().mean()
+                            entropy_loss = global_network.beta * entropy
+
+                            loss = policy_loss + value_loss + entropy_loss
+                            print("Loss: ", loss)
+
+                            global_network.train()
+
+                    # Increment global counter
+                    with global_episode.get_lock():
+                        global_episode.value += 1
+                        print(f"\n\n====\nMain process incremented global episode counter: {global_episode.value}\n====\n\n")
+
+                    condition.notify_all()
+
+                # If all episodes are done, exit
+                if global_episode.value >= args.n_episodes:
+                    break
 
             # TODO: Implementare il tracking delle metriche
 
             [worker.join() for worker in workers]
 
+            print(f"\n\n====\nA3C training finished!\n====\n")
     else:
-        env = gym.make("ALE/SpaceInvaders-v5", render_mode="rgb_array")
-
         agent = getattr(models, args.agent)(**agent_parameters)
 
         agent.initialize_env(env)

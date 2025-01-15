@@ -1,3 +1,4 @@
+import os
 from abc import ABC
 from typing import Literal
 
@@ -11,6 +12,8 @@ from gymnasium.wrappers import AtariPreprocessing, FrameStackObservation
 
 from utils.functions import seed_everything
 from .rl_agent import RLAgent
+
+from tqdm import tqdm
 
 
 # Based on: https://github.com/MorvanZhou/pytorch-A3C
@@ -33,8 +36,6 @@ class Agent(nn.Module):
         # out_size_conv2 = (B, C_out = 64, H_out = 9, W_out = 9)
         # inpt_size_out = C_out * H_out * W_out = 64 * 9 * 9 = 5184
         self.lstm_cell = nn.LSTMCell(5184, 128)
-
-        # TODO: critic should have 1 output unit for the value
 
         if self.model_type == 'Actor':
             self.out_layer = nn.Linear(128, self.n_actions)
@@ -155,17 +156,21 @@ class A3C(RLAgent, nn.Module, ABC):
 
 
 class Worker(mp.Process):
-    def __init__(self, global_network, optimizer, rank, t_max, global_episode, n_episodes, seed, n_threads):
+    def __init__(self, global_network, optimizer, queue, condition, rank, t_max, global_episode, n_episodes, seed, n_threads, val_every_ep):
         super(Worker, self).__init__()
 
         self.global_network = global_network
         self.optimizer = optimizer
         self.t_max = t_max
         self.rank = rank
+        self.queue = queue
+        self.condition = condition
+
         self.global_episode = global_episode
-        self.n_episodes = n_episodes
+        self.n_episodes = n_episodes + 1
         self.seed = seed
         self.n_threads = n_threads
+        self.val_every_ep = val_every_ep
 
         self.local_network = A3C(n_actions=global_network.n_actions, n_channels=global_network.n_channels,
                                  eps_start=global_network.eps_start, eps_end=global_network.eps_end,
@@ -205,44 +210,52 @@ class Worker(mp.Process):
     """
 
     def run(self):
-        print(f"Worker {self.rank} started. Current global episode: {self.global_episode.value}")
+        pid = os.getpid()
+        print(f"Worker {self.rank} started. - PID: {pid} Current global episode: {self.global_episode.value}", flush=True)
 
         # Handle CPU Oversubscription: https://pytorch.org/docs/stable/notes/multiprocessing.html#cpu-oversubscription
         torch.set_num_threads(self.n_threads)
 
         while self.global_episode.value < self.n_episodes:
+
             """1. Reset gradients: dθ ← 0 and dθv ← 0"""
             rewards, log_probs, values, dones = [], [], [], []
             """2. Get state st"""
             state, _ = self.local_network.env.reset()
             done = False
             action_probs = None
+            processed_frames = 0
 
-            for t in range(self.t_max):
-                state_tensor = torch.FloatTensor(state).unsqueeze(0)
-                action_probs, value = self.local_network(state_tensor)
+            with tqdm(range(self.t_max)) as pg_bar:
+                for t in pg_bar:
+                    state_tensor = torch.FloatTensor(state).unsqueeze(0)
+                    action_probs, value = self.local_network(state_tensor)
 
-                """3. Perform at according to policy π(at|st; θ')"""
-                action = self.local_network.policy(state)
+                    """3. Perform at according to policy π(at|st; θ')"""
+                    action = self.local_network.policy(state)
 
-                """4. Receive reward rt and new state st+1"""
-                next_state, reward, terminated, truncated, _ = self.local_network.env.step(action)
-                done = terminated or truncated
+                    """4. Receive reward rt and new state st+1"""
+                    next_state, reward, terminated, truncated, _ = self.local_network.env.step(action)
+                    done = terminated or truncated
 
-                rewards.append(reward)
-                log_probs.append(torch.log(action_probs[0, action]))
-                values.append(value.squeeze())
-                dones.append(done)
+                    processed_frames += 1
+                    self.local_network.eps_schedule(processed_frames)
 
-                if done:
-                    break
+                    rewards.append(reward)
+                    log_probs.append(torch.log(action_probs[0, action]))
+                    values.append(value.squeeze())
+                    dones.append(done)
 
-                state = next_state
+                    pg_bar.set_description(f"Worker {self.rank} - Global episode: {self.global_episode.value} - Step: {t + 1}/{self.t_max}, Reward: {reward}")
+
+                    if done:
+                        break
+
+                    state = next_state
 
             """5.   R = 0 for terminal st
                     R = V (st , θv′ ) for non-terminal st --> Bootstrap from last state """
-
-            next_value = 0 if done else self.local_network.critic(torch.FloatTensor(state).unsqueeze(0), True)
+            next_value = 0 if done else self.local_network.critic(torch.FloatTensor(state).unsqueeze(0))
             """6. R ← ri + γR """
             returns = self.local_network.compute_returns(rewards, next_value, dones)
 
@@ -265,5 +278,14 @@ class Worker(mp.Process):
             self.optimizer.step()
 
             self.local_network.load_state_dict(self.global_network.state_dict())
+
+            if self.global_episode.value % self.val_every_ep == 0:
+                print(f"Worker {self.rank} - Global episode: {self.global_episode.value} - Loss: {loss.item():.2f}", flush=True)
+
+            # notify main process that the episode has ended
+            self.queue.put(self.rank)
+
+            with self.condition:
+                self.condition.wait()
 
         self.local_network.env.close()
