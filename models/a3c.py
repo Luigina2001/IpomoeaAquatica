@@ -9,6 +9,7 @@ import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.nn.functional as F
 from gymnasium.wrappers import AtariPreprocessing, FrameStackObservation
+from torch.distributions import Categorical
 
 from utils.functions import seed_everything
 from .rl_agent import RLAgent
@@ -235,7 +236,9 @@ class Worker(mp.Process):
                     action_probs, value = self.local_network(state_tensor)
 
                     """3. Perform at according to policy π(at|st; θ')"""
-                    action = self.local_network.policy(state)
+                    # action = self.local_network.policy(state)
+                    policy = Categorical(action_probs)
+                    action = policy.sample()
 
                     """4. Receive reward rt and new state st+1"""
                     next_state, reward, terminated, truncated, _ = self.local_network.env.step(action)
@@ -250,7 +253,8 @@ class Worker(mp.Process):
                     dones.append(done)
 
                     pg_bar.set_description(
-                        f"Worker {self.rank} - Global episode: {self.global_episode.value} - Step: {t + 1}/{self.t_max}, Reward: {reward}")
+                        f"Worker {self.rank} - Global episode: {self.global_episode.value} "
+                        f"- Step: {t + 1}/{self.t_max}, Score: {sum(rewards)}")
 
                     if done:
                         break
@@ -267,9 +271,9 @@ class Worker(mp.Process):
             advantages = returns - torch.stack(values)
             policy_loss = -(torch.stack(log_probs) * advantages).mean()
             value_loss = F.mse_loss(torch.stack(values), returns, reduction='mean')
-            entropy = -1 * (action_probs * torch.log(action_probs)).sum().mean()
-            entropy_loss = self.local_network.beta * entropy
-
+            # entropy = -1 * (action_probs * torch.log(action_probs)).sum().mean()
+            # entropy_loss = self.local_network.beta * entropy
+            entropy_loss = -self.local_network.beta * Categorical(action_probs).entropy().mean()
             loss = policy_loss + value_loss + entropy_loss
 
             # Update local and global network

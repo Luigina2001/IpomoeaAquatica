@@ -4,6 +4,7 @@ import time
 from typing import Optional
 
 from torch import optim
+from torch.distributions import Categorical
 from torch.multiprocessing import Manager, Queue, Value, Condition
 
 import yaml
@@ -113,9 +114,9 @@ def train(args):
             del agent_parameters["lr"]
             global_network = A3C(**agent_parameters)
             global_network.initialize_env(env)
-            global_network.env = RecordVideo(global_network.env, episode_trigger=lambda t: t % args.val_every_ep == 0,
-                                             video_folder=video_dir,
-                                             name_prefix=f"video_{agent_name}")
+            # global_network.env = RecordVideo(global_network.env, episode_trigger=lambda t: t % args.val_every_ep == 0,
+                                             # video_folder=video_dir,
+                                             # name_prefix=f"video_{agent_name}")
             global_network.share_memory()  # share parameters between processes
             global_episode = Value('i', 1)
             stop_signal = Value('b', False)
@@ -166,7 +167,9 @@ def train(args):
                             for t in pg_bar:
                                 state_tensor = torch.FloatTensor(state).unsqueeze(0)
                                 action_probs, value = global_network(state_tensor)
-                                action = global_network.policy(state)
+                                # action = global_network.policy(state)
+                                policy = Categorical(action_probs)
+                                action = policy.sample()
 
                                 next_state, reward, terminated, truncated, _ = global_network.env.step(action)
                                 done = terminated or truncated
@@ -177,7 +180,8 @@ def train(args):
                                 dones.append(done)
 
                                 pg_bar.set_description(
-                                    f"Main thread - Global episode: {global_episode.value} - Step: {t + 1}/{args.n_steps}, Reward: {reward}")
+                                    f"Main thread - Global episode: {global_episode.value} - Step: {t + 1}/{args.n_steps}, "
+                                    f"Score: {sum(rewards)}")
 
                                 if done:
                                     break
@@ -190,8 +194,9 @@ def train(args):
                             advantages = returns - torch.stack(values)
                             policy_loss = -(torch.stack(log_probs) * advantages).mean()
                             value_loss = F.mse_loss(torch.stack(values), returns, reduction='mean')
-                            entropy = -1 * (action_probs * torch.log(action_probs)).sum().mean()
-                            entropy_loss = global_network.beta * entropy
+                            # entropy = -1 * (action_probs * torch.log(action_probs)).sum().mean()
+                            # entropy_loss = global_network.beta * entropy
+                            entropy_loss = -global_network.beta * Categorical(action_probs).entropy().mean()
 
                             loss = policy_loss + value_loss + entropy_loss
 
@@ -324,7 +329,7 @@ def argument_parser():
     parser.add_argument("--epsilon", type=float, default=1e-3, help="Threshold for Q-values saturation")
     parser.add_argument("--tmax", type=int, default=20, help="Maximum steps for A3C updates")
     parser.add_argument("--beta", type=float, default=0.01, help="Entropy regularization factor")
-    parser.add_argument("--n_workers", type=float, default=os.cpu_count(), help="Number of workers for A3C")
+    parser.add_argument("--n_workers", type=int, default=os.cpu_count(), help="Number of workers for A3C")
     parser.add_argument("--n_vcpus", type=int, default=os.cpu_count(), help="Number of vCPUS for A3C")
     parser.add_argument("--n_threads", type=Optional[int], default=None, help="Number of threads for vCPUS for A3C")
 
