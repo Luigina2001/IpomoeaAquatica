@@ -236,7 +236,6 @@ class Worker(mp.Process):
                     action_probs, value = self.local_network(state_tensor)
 
                     """3. Perform at according to policy π(at|st; θ')"""
-                    # action = self.local_network.policy(state)
                     policy = Categorical(action_probs)
                     action = policy.sample()
 
@@ -286,10 +285,6 @@ class Worker(mp.Process):
             self.optimizer.step()
 
             self.local_network.load_state_dict(self.global_network.state_dict())
-
-            if self.global_episode.value % self.val_every_ep == 0:
-                print(f"Worker {self.rank} - Global episode: {self.global_episode.value} - Loss: {loss.item():.2f}",
-                      flush=True)
 
             # notify main process that the episode has ended
             self.queue.put(self.rank)

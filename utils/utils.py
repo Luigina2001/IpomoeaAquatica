@@ -136,7 +136,6 @@ class MetricLogger:
         mmavg = (max(self.raw_rewards[-self.val_every_ep:]) - min(self.raw_rewards[-self.val_every_ep:])) / avg_reward
         self.mmavg_values.append(mmavg)
 
-
         episode_data = {
             f"Avg Reward of {self.val_every_ep}": avg_reward,
             "WDCn": wdc_n,
@@ -150,7 +149,8 @@ class MetricLogger:
         # Smoothed Avg Rewards
         if len(self.avg_rewards) > 0:
             smoothed_avg_rewards = smooth_data(self.avg_rewards, window_size=10)
-            episode_data.update({"Smoothed AvgReward": smoothed_avg_rewards[-1] if len(smoothed_avg_rewards) > 0 else 0})
+            episode_data.update(
+                {"Smoothed AvgReward": smoothed_avg_rewards[-1] if len(smoothed_avg_rewards) > 0 else 0})
 
         if avg_playtime is not None and avg_playtime > 0:
             episode_data.update({f"Avg Playtime of {self.val_every_ep}": avg_playtime // self.val_every_ep})
@@ -186,11 +186,9 @@ class MetricLogger:
 
         self.wandb_run.log(summary_data)
 
-
     def log_final_metrics(self, episode, convergence_steps=None, figsize=(12, 8)):
         if self.wandb_run is None:
             return
-
 
         summary_data = {}
 
@@ -224,12 +222,13 @@ class MetricLogger:
 
             plt.close()
 
-            data = [[_ * self.val_every_ep, self.dbs_values[_]] for _ in range(0, len(self.dbs_values), self.val_every_ep)]
+            data = [[_ * self.val_every_ep, self.dbs_values[_]] for _ in
+                    range(0, len(self.dbs_values), self.val_every_ep)]
             table = wandb.Table(data=data, columns=["Episode", "DBS"])
             summary_data.update({f"DBS Table of {self.val_every_ep}": wandb.plot.bar(table, "Episode", "DBS")})
 
         if len(self.raw_rewards) > 0:
-            data = [[(_ + 1), self.raw_rewards[_]] for _ in range(episode)]
+            data = [[(_ + 1), self.raw_rewards[_]] for _ in range(len(self.raw_rewards))]
             table = wandb.Table(data=data, columns=["Episode", "Raw Reward"])
             summary_data.update({"Raw Reward Table": wandb.plot.scatter(table, "Episode", "Raw Reward")})
 

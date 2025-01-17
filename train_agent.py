@@ -114,9 +114,6 @@ def train(args):
             del agent_parameters["lr"]
             global_network = A3C(**agent_parameters)
             global_network.initialize_env(env)
-            # global_network.env = RecordVideo(global_network.env, episode_trigger=lambda t: t % args.val_every_ep == 0,
-                                             # video_folder=video_dir,
-                                             # name_prefix=f"video_{agent_name}")
             global_network.share_memory()  # share parameters between processes
             global_episode = Value('i', 1)
             stop_signal = Value('b', False)
@@ -140,6 +137,9 @@ def train(args):
 
             [worker.start() for worker in workers]
 
+            global_network.env = RecordVideo(global_network.env, episode_trigger=lambda t: t % args.val_every_ep == 0,
+                                             video_folder=video_dir,
+                                             name_prefix=f"video_{agent_name}")
             # Main loop for managing episode counter
             while True:
                 # Collect messages from workers
@@ -229,7 +229,7 @@ def train(args):
 
             [worker.join() for worker in workers]
 
-            metric_logger.log_final_metrics(global_episode.value)
+            metric_logger.log_final_metrics(global_episode.value - 1)
 
             print(f"\n\n====\nA3C training finished!\n====\n")
     else:
@@ -303,8 +303,6 @@ def argument_parser():
     parser.add_argument("--checkpoint_path", type=str, default=None)
     parser.add_argument("--agent", type=str, default="DQN",
                         choices=["QLearning", "DQN", "A3C"])
-    parser.add_argument("--every_visit", action="store_true", default=False,
-                        help="Boolean to discern between first-visit and every-visit Monte Carlo methods")
     parser.add_argument("--batch_size", type=int, default=32,
                         help="Batch size for DQN optimization")
     parser.add_argument("--target_update_freq", type=int,
