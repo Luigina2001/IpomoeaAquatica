@@ -3,6 +3,8 @@ import os
 import time
 from typing import Optional
 
+import numpy as np
+from matplotlib import pyplot as plt
 from torch import optim
 from torch.distributions import Categorical
 from torch.multiprocessing import Manager, Queue, Value, Condition
@@ -51,7 +53,8 @@ def train(args):
 
         run_name = args.run_name if args.run_name else (agent_name.lower() if args.no_log_to_wandb else None)
         run = wandb.init(entity=args.entity, project=args.project, name=run_name)
-        run.name = agent_name + "-" + run.name if args.sweep_id is None else agent_name + f"-sweep-{args.sweep_id}-" + run.name
+        run.name = agent_name + "-" + run.name if args.sweep_id is None \
+            else agent_name + f"-sweep-{args.sweep_id}-" + run.name
         experiment_dir = str(osp.join(experiment_dir if experiment_dir else args.experiment_dir, run.id))
     else:
         experiment_dir = str(
@@ -112,6 +115,7 @@ def train(args):
         with Manager() as _:
             lr = agent_parameters["lr"]
             del agent_parameters["lr"]
+
             global_network = A3C(**agent_parameters)
             global_network.initialize_env(env)
             global_network.share_memory()  # share parameters between processes
@@ -122,6 +126,8 @@ def train(args):
             condition = Condition()
 
             metric_logger = MetricLogger(run, args.val_every_ep)
+            wandb_run = run
+
             early_stopping = EarlyStopping(float('-inf'), experiment_dir, patience=args.patience)
             stop_training = False
 
@@ -133,13 +139,23 @@ def train(args):
             workers = [
                 Worker(global_network, optimizer, queue, condition, stop_signal, rank, args.n_steps, global_episode,
                        args.n_episodes,
-                       args.seed, n_threads_per_worker, args.val_every_ep) for rank in range(args.n_workers)]
+                       args.seed, n_threads_per_worker, args.val_every_ep, wandb_run) for rank in range(args.n_workers)]
 
             [worker.start() for worker in workers]
 
-            global_network.env = RecordVideo(global_network.env, episode_trigger=lambda t: t % args.val_every_ep == 0,
+            global_network.env = RecordVideo(global_network.env,
+                                             episode_trigger=lambda t: t % args.val_every_ep == 0,
                                              video_folder=video_dir,
                                              name_prefix=f"video_{agent_name}")
+
+            raw_rewards = []
+            avg_rewards = []
+            dbs_values = []
+            consecutive_dbs_values = []
+            mmavg_values = []
+            wdc_n = 0
+            wdc_p = 0
+
             # Main loop for managing episode counter
             while True:
                 # Collect messages from workers
@@ -155,6 +171,7 @@ def train(args):
 
                         global_network.eval()
 
+                        # Disable epsilon during validation
                         if global_network.eps > 0:
                             global_network.eps = 0
 
@@ -172,6 +189,7 @@ def train(args):
                                 action = policy.sample()
 
                                 next_state, reward, terminated, truncated, _ = global_network.env.step(action)
+                                # print(reward)
                                 done = terminated or truncated
 
                                 rewards.append(reward)
@@ -180,8 +198,13 @@ def train(args):
                                 dones.append(done)
 
                                 pg_bar.set_description(
-                                    f"Main thread - Global episode: {global_episode.value} - Step: {t + 1}/{args.n_steps}, "
+                                    f"Main thread - Global episode: {global_episode.value} - "
+                                    f"Step: {t + 1}/{args.n_steps}, "
                                     f"Score: {sum(rewards)}")
+
+                                wandb_run.log({
+                                    f"Score": sum(rewards)
+                                })
 
                                 if done:
                                     break
@@ -200,10 +223,52 @@ def train(args):
 
                             loss = policy_loss + value_loss + entropy_loss
 
-                            metric_logger.raw_rewards = rewards
+                            if global_episode.value % args.val_every_ep == 0:
+                                wandb_run.log({
+                                    f"Policy loss": policy_loss.item(),
+                                    f"Value loss": value_loss.item(),
+                                    f"Entropy loss": entropy_loss.item(),
+                                    f"Total loss": loss.item(),
+                                    f"Advantage mean": advantages.mean().item(),
+                                    f"Return mean": returns.mean().item(),
+                                    f"Reward/Score mean": np.mean(rewards)
+                                })
 
-                            metric_logger.compute_log_metrics(None, None, loss.item())
+                            # metric_logger.raw_rewards = rewards
+                            # metric_logger.compute_log_metrics(None, None, loss.item())
 
+                            for reward in rewards:
+                                raw_rewards.append(reward)
+
+                            # Avg reward
+                            avg_reward = np.mean(raw_rewards)
+                            avg_rewards.append(avg_reward)
+
+                            # DBS
+                            if len(raw_rewards) > 1:
+                                dbs = raw_rewards[-1] - raw_rewards[-2]
+                                print(f"DBS: {dbs}")
+                                dbs_values.append(dbs)
+
+                                # WDC
+                                if dbs < 0:
+                                    wdc_n += dbs
+                                elif dbs > 0:
+                                    wdc_p += dbs
+
+                                # MMAVG
+                                mmavg = (max(raw_rewards[-args.val_every_ep:]) -
+                                         min(raw_rewards[-args.val_every_ep:])) / avg_reward
+                                print(
+                                    f"MMAVG: {mmavg}")
+                                mmavg_values.append(mmavg)
+
+                                wandb_run.log({
+                                    f"Avg Reward": avg_reward,
+                                    f"MMAVG": mmavg if len(mmavg_values) > 0 and mmavg is not None else 0,
+                                    f"WDC_n": wdc_n,
+                                    f"WDC_p": wdc_p
+                                })
                             global_network.train()
 
                             stop_training = early_stopping(loss.item(), global_network, global_episode.value,
@@ -219,7 +284,8 @@ def train(args):
 
                         if not stop_training:
                             print(
-                                f"\n\n====\nMain process incremented global episode counter: {global_episode.value}\n====\n\n")
+                                f"\n\n====\nMain process incremented global episode counter: "
+                                f"{global_episode.value}\n====\n\n")
 
                     condition.notify_all()
 
@@ -229,7 +295,29 @@ def train(args):
 
             [worker.join() for worker in workers]
 
-            metric_logger.log_final_metrics(global_episode.value - 1)
+            # metric_logger.log_final_metrics(global_episode.value - 1)
+            if len(dbs_values) > 0:
+                for v in dbs_values:
+                    wandb_run.log({"DBS": v})
+
+                plt.figure(figsize=(12, 8))
+                colors = ["red" if v < 0 else "blue" for v in dbs_values]
+
+                episodes = range(len(dbs_values))
+                plt.bar(episodes, dbs_values, color=colors, width=0.95)
+
+                plt.xlabel("Episode")
+                plt.ylabel("DBS")
+                plt.title("DBS Histogram")
+
+                wandb_run.log({"DBS Histogram": wandb.Image(plt)})
+
+                plt.close()
+
+                data = [[_ * args.val_every_ep, dbs_values[_]] for _ in
+                        range(0, len(dbs_values), args.val_every_ep)]
+                table = wandb.Table(data=data, columns=["Episode", "DBS"])
+                wandb_run.log({f"DBS Table of {args.val_every_ep}": wandb.plot.bar(table, "Episode", "DBS")})
 
             print(f"\n\n====\nA3C training finished!\n====\n")
     else:
@@ -237,7 +325,8 @@ def train(args):
 
         agent.initialize_env(env)
 
-        agent.env = RecordVideo(agent.env, episode_trigger=lambda t: t % args.val_every_ep == 0, video_folder=video_dir,
+        agent.env = RecordVideo(agent.env, episode_trigger=lambda t: t % args.val_every_ep == 0,
+                                video_folder=video_dir,
                                 name_prefix=f"video_{agent_name}")
 
         if agent_name == "DQN":

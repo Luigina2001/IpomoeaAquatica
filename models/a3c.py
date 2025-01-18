@@ -8,6 +8,7 @@ import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.nn.functional as F
+import wandb
 from gymnasium.wrappers import AtariPreprocessing, FrameStackObservation
 from torch.distributions import Categorical
 
@@ -158,7 +159,7 @@ class A3C(RLAgent, nn.Module, ABC):
 
 class Worker(mp.Process):
     def __init__(self, global_network, optimizer, queue, condition, stop_signal, rank, t_max, global_episode,
-                 n_episodes, seed, n_threads, val_every_ep):
+                 n_episodes, seed, n_threads, val_every_ep, wandb_run):
         super(Worker, self).__init__()
 
         self.global_network = global_network
@@ -174,6 +175,7 @@ class Worker(mp.Process):
         self.seed = seed
         self.n_threads = n_threads
         self.val_every_ep = val_every_ep
+        self.wandb_run = wandb_run
 
         self.local_network = A3C(n_actions=global_network.n_actions, n_channels=global_network.n_channels,
                                  eps_start=global_network.eps_start, eps_end=global_network.eps_end,
@@ -217,7 +219,9 @@ class Worker(mp.Process):
         print(f"Worker {self.rank} started. - PID: {pid} Current global episode: {self.global_episode.value}",
               flush=True)
 
-        # Handle CPU Oversubscription: https://pytorch.org/docs/stable/notes/multiprocessing.html#cpu-oversubscription
+        # Handle CPU Oversubscription:
+        # https://pytorch.org/docs/stable/notes/multiprocessing.html#cpu-oversubscription
+
         torch.set_num_threads(self.n_threads)
 
         while self.global_episode.value < self.n_episodes and not self.stop_signal.value:
@@ -230,7 +234,7 @@ class Worker(mp.Process):
             action_probs = None
             processed_frames = 0
 
-            with tqdm(range(self.t_max)) as pg_bar:
+            with tqdm(range(self.t_max), desc=f"Worker {self.rank}") as pg_bar:
                 for t in pg_bar:
                     state_tensor = torch.FloatTensor(state).unsqueeze(0)
                     action_probs, value = self.local_network(state_tensor)
@@ -239,9 +243,17 @@ class Worker(mp.Process):
                     policy = Categorical(action_probs)
                     action = policy.sample()
 
+                    if t % 10 == 0:
+                        self.wandb_run.log({
+                            f"Worker {self.rank}/action_probs_mean": action_probs.mean().item(),
+                            f"Worker {self.rank}/value_step": value.item()
+                        })
+
                     """4. Receive reward rt and new state st+1"""
                     next_state, reward, terminated, truncated, _ = self.local_network.env.step(action)
                     done = terminated or truncated
+
+                    self.wandb_run.log({f"Worker {self.rank}/reward_raw": reward})
 
                     processed_frames += 1
                     self.local_network.eps_schedule(processed_frames)
@@ -260,20 +272,50 @@ class Worker(mp.Process):
 
                     state = next_state
 
+            # Logging episode statistics (for the main worker only)
+            if self.rank == 0:
+                avg_reward_last_100 = np.mean(rewards[-100:])
+                # print(
+                # f"Global Episode {self.global_episode.value}: Average Reward (Last 100 Episodes) = "
+                # f"{avg_reward_last_100}")
+                self.wandb_run.log({
+                    "Global Episode": self.global_episode.value,
+                    "Average Reward (Last 100 Episodes)": avg_reward_last_100
+                })
+
             """5.   R = 0 for terminal st
                     R = V (st , θv′ ) for non-terminal st --> Bootstrap from last state """
             next_value = 0 if done else self.local_network.critic(torch.FloatTensor(state).unsqueeze(0))
             """6. R ← ri + γR """
             returns = self.local_network.compute_returns(rewards, next_value, dones)
-
             """7. Accumulate gradients for policy and value"""
             advantages = returns - torch.stack(values)
+
+            # Log advantages and returns
+            self.wandb_run.log({
+                f"Worker {self.rank}/advantage_mean": advantages.mean().item(),
+                f"Worker {self.rank}/value_mean": torch.stack(values).mean().item(),
+                f"Worker {self.rank}/return_mean": returns.mean().item()
+            })
+
+
+            """Compute loss"""
             policy_loss = -(torch.stack(log_probs) * advantages).mean()
             value_loss = F.mse_loss(torch.stack(values), returns, reduction='mean')
             # entropy = -1 * (action_probs * torch.log(action_probs)).sum().mean()
             # entropy_loss = self.local_network.beta * entropy
             entropy_loss = -self.local_network.beta * Categorical(action_probs).entropy().mean()
             loss = policy_loss + value_loss + entropy_loss
+
+            # Log losses and entropy
+            entropy = Categorical(action_probs).entropy().mean()
+            self.wandb_run.log({
+                f"Worker {self.rank}/policy_loss": policy_loss.item(),
+                f"Worker {self.rank}/value_loss": value_loss.item(),
+                f"Worker {self.rank}/entropy_loss": entropy_loss.item(),
+                f"Worker {self.rank}/total_loss": loss.item(),
+                f"Worker {self.rank}/entropy": entropy.item()
+            })
 
             # Update local and global network
             self.optimizer.zero_grad()
@@ -282,8 +324,11 @@ class Worker(mp.Process):
             for lp, gp in zip(self.local_network.parameters(), self.global_network.parameters()):
                 gp.grad = lp.grad
 
-            self.optimizer.step()
+            for name, param in self.global_network.named_parameters():
+                if param.grad is not None:
+                    self.wandb_run.log({f"grad_norm/{name}": param.grad.norm().item()})
 
+            self.optimizer.step()
             self.local_network.load_state_dict(self.global_network.state_dict())
 
             # notify main process that the episode has ended
