@@ -184,12 +184,10 @@ def train(args):
                             for t in pg_bar:
                                 state_tensor = torch.FloatTensor(state).unsqueeze(0)
                                 action_probs, value = global_network(state_tensor)
-                                # action = global_network.policy(state)
                                 policy = Categorical(action_probs)
                                 action = policy.sample()
 
                                 next_state, reward, terminated, truncated, _ = global_network.env.step(action)
-                                # print(reward)
                                 done = terminated or truncated
 
                                 rewards.append(reward)
@@ -202,77 +200,60 @@ def train(args):
                                     f"Step: {t + 1}/{args.n_steps}, "
                                     f"Score: {sum(rewards)}")
 
-                                wandb_run.log({
-                                    f"Score": sum(rewards)
-                                })
-
                                 if done:
                                     break
 
                                 state = next_state
 
-                            next_value = 0 if done else global_network.critic(torch.FloatTensor(state).unsqueeze(0))
-                            returns = global_network.compute_returns(rewards, next_value, dones)
+                        next_value = 0 if done else global_network.critic(torch.FloatTensor(state).unsqueeze(0))
+                        returns = global_network.compute_returns(rewards, next_value, dones)
 
-                            advantages = returns - torch.stack(values)
-                            policy_loss = -(torch.stack(log_probs) * advantages).mean()
-                            value_loss = F.mse_loss(torch.stack(values), returns, reduction='mean')
-                            # entropy = -1 * (action_probs * torch.log(action_probs)).sum().mean()
-                            # entropy_loss = global_network.beta * entropy
-                            entropy_loss = -global_network.beta * Categorical(action_probs).entropy().mean()
+                        advantages = returns - torch.stack(values)
+                        policy_loss = -(torch.stack(log_probs) * advantages).mean()
+                        value_loss = F.mse_loss(torch.stack(values), returns, reduction='mean')
+                        entropy_loss = -global_network.beta * Categorical(action_probs).entropy().mean()
 
-                            loss = policy_loss + value_loss + entropy_loss
+                        loss = policy_loss + value_loss + entropy_loss
 
-                            if global_episode.value % args.val_every_ep == 0:
-                                wandb_run.log({
-                                    f"Policy loss": policy_loss.item(),
-                                    f"Value loss": value_loss.item(),
-                                    f"Entropy loss": entropy_loss.item(),
-                                    f"Total loss": loss.item(),
-                                    f"Advantage mean": advantages.mean().item(),
-                                    f"Return mean": returns.mean().item(),
-                                    f"Reward/Score mean": np.mean(rewards)
-                                })
+                        wandb_run.log({
+                            "Policy loss": policy_loss.item(),
+                            "Value loss": value_loss.item(),
+                            "Entropy loss": entropy_loss.item(),
+                            "Total loss": loss.item(),
+                            "Advantage mean": advantages.mean().item(),
+                            "Return mean": returns.mean().item(),
+                            "Reward/Score mean": np.mean(rewards),
+                            "Score": sum(rewards)
+                        })
 
-                            # metric_logger.raw_rewards = rewards
-                            # metric_logger.compute_log_metrics(None, None, loss.item())
+                        # Avg reward
+                        avg_reward = np.mean(rewards)
+                        avg_rewards.append(avg_reward)
 
-                            for reward in rewards:
-                                raw_rewards.append(reward)
+                        # DBS
+                        if len(rewards) > 1:
+                            dbs = [rewards[i + 1] - rewards[i] for i in range(len(rewards) - 1)]
+                            dbs_values.extend(dbs)
 
-                            # Avg reward
-                            avg_reward = np.mean(raw_rewards)
-                            avg_rewards.append(avg_reward)
+                            # WDC
+                            wdc_n = sum([x for x in dbs if x < 0])
+                            wdc_p = sum([x for x in dbs if x > 0])
 
-                            # DBS
-                            if len(raw_rewards) > 1:
-                                dbs = raw_rewards[-1] - raw_rewards[-2]
-                                print(f"DBS: {dbs}")
-                                dbs_values.append(dbs)
+                            # MMAVG
+                            mmavg = (np.max(rewards) - np.min(rewards)) / avg_reward
+                            mmavg_values.append(mmavg)
 
-                                # WDC
-                                if dbs < 0:
-                                    wdc_n += dbs
-                                elif dbs > 0:
-                                    wdc_p += dbs
+                            wandb_run.log({
+                                f"Avg Reward": avg_reward,
+                                f"MMAVG": mmavg if len(mmavg_values) > 0 and mmavg is not None else 0,
+                                f"WDC_n": wdc_n,
+                                f"WDC_p": wdc_p
+                            })
 
-                                # MMAVG
-                                mmavg = (max(raw_rewards[-args.val_every_ep:]) -
-                                         min(raw_rewards[-args.val_every_ep:])) / avg_reward
-                                print(
-                                    f"MMAVG: {mmavg}")
-                                mmavg_values.append(mmavg)
+                        global_network.train()
 
-                                wandb_run.log({
-                                    f"Avg Reward": avg_reward,
-                                    f"MMAVG": mmavg if len(mmavg_values) > 0 and mmavg is not None else 0,
-                                    f"WDC_n": wdc_n,
-                                    f"WDC_p": wdc_p
-                                })
-                            global_network.train()
-
-                            stop_training = early_stopping(loss.item(), global_network, global_episode.value,
-                                                           video_path=video_path)
+                        stop_training = early_stopping(loss.item(), global_network, global_episode.value,
+                                                       video_path=video_path)
 
                     # Increment global counter
                     with global_episode.get_lock():

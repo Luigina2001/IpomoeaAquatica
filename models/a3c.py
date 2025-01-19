@@ -272,17 +272,6 @@ class Worker(mp.Process):
 
                     state = next_state
 
-            # Logging episode statistics (for the main worker only)
-            if self.rank == 0:
-                avg_reward_last_100 = np.mean(rewards[-100:])
-                # print(
-                # f"Global Episode {self.global_episode.value}: Average Reward (Last 100 Episodes) = "
-                # f"{avg_reward_last_100}")
-                self.wandb_run.log({
-                    "Global Episode": self.global_episode.value,
-                    "Average Reward (Last 100 Episodes)": avg_reward_last_100
-                })
-
             """5.   R = 0 for terminal st
                     R = V (st , θv′ ) for non-terminal st --> Bootstrap from last state """
             next_value = 0 if done else self.local_network.critic(torch.FloatTensor(state).unsqueeze(0))

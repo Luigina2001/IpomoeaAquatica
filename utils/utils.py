@@ -186,7 +186,7 @@ class MetricLogger:
 
         self.wandb_run.log(summary_data)
 
-    def log_final_metrics(self, episode, convergence_steps=None, figsize=(12, 8)):
+    def log_final_metrics(self, convergence_steps=None, figsize=(12, 8)):
         if self.wandb_run is None:
             return
 
