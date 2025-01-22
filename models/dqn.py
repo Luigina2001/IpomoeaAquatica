@@ -315,6 +315,6 @@ def dq_learning(policy_network, target_network, n_episodes: int, val_every_ep: i
                                                                             video_path):
                     break
 
-    metric_logger.log_final_metrics(episode, processed_frames)
+    metric_logger.log_final_metrics(processed_frames)
 
     policy_network.env.close()

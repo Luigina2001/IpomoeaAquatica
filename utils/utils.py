@@ -124,7 +124,15 @@ class MetricLogger:
         self.avg_rewards.append(avg_reward)
 
         # DBS
-        dbs = [self.raw_rewards[i + 1] - self.raw_rewards[i] for i in range(len(self.raw_rewards) - 1)]
+        i = 0
+        dbs = []
+        while i < len(self.raw_rewards):
+            j = i + self.val_every_ep - 1
+            if j >= len(self.raw_rewards):
+                break
+            dbs.append(self.raw_rewards[j] - self.raw_rewards[i])
+            i = j + 1
+
         self.dbs_values.extend(dbs[-self.val_every_ep:])
         self.consecutive_dbs_values.append(self.raw_rewards[-1] - self.raw_rewards[-2])
 
@@ -136,12 +144,21 @@ class MetricLogger:
         mmavg = (max(self.raw_rewards[-self.val_every_ep:]) - min(self.raw_rewards[-self.val_every_ep:])) / avg_reward
         self.mmavg_values.append(mmavg)
 
+        current_episode = (len(self.raw_rewards) // self.val_every_ep) * self.val_every_ep
+
         episode_data = {
-            f"Avg Reward of {self.val_every_ep}": avg_reward,
             "WDCn": wdc_n,
             "WDCp": wdc_p,
             "MMAVG": mmavg if len(self.mmavg_values) > 0 else 0,
         }
+
+        episode_data.update({f"Avg Reward of {self.val_every_ep}": avg_reward})
+
+        if avg_playtime is not None and avg_playtime > 0:
+            episode_data.update({f"Avg Playtime of {self.val_every_ep}": avg_playtime // self.val_every_ep})
+
+        if loss is not None:
+            episode_data.update({f"Avg Loss of {self.val_every_ep}": loss / self.val_every_ep})
 
         if avg_q_value is not None:
             episode_data.update({"Avg Q Value": avg_q_value})
@@ -152,12 +169,7 @@ class MetricLogger:
             episode_data.update(
                 {"Smoothed AvgReward": smoothed_avg_rewards[-1] if len(smoothed_avg_rewards) > 0 else 0})
 
-        if avg_playtime is not None and avg_playtime > 0:
-            episode_data.update({f"Avg Playtime of {self.val_every_ep}": avg_playtime // self.val_every_ep})
-
-        if loss is not None:
-            episode_data.update({f"Avg Loss of {self.val_every_ep}": loss / self.val_every_ep})
-
+        episode_data.update({"episode": current_episode})
         self.wandb_run.log(episode_data)
 
         if len(self.consecutive_dbs_values) == len(self.mmavg_values):
@@ -184,7 +196,7 @@ class MetricLogger:
         avg_reward = sum(thread_rewards) / n_threads
         summary_data = {f"Avg Reward of {n_threads} threads": avg_reward}
 
-        self.wandb_run.log(summary_data)
+        self.wandb_run.log(summary_data, step=None)
 
     def log_final_metrics(self, convergence_steps=None, figsize=(12, 8)):
         if self.wandb_run is None:
@@ -222,7 +234,7 @@ class MetricLogger:
 
             plt.close()
 
-            data = [[_ * self.val_every_ep, self.dbs_values[_]] for _ in
+            data = [[_, self.dbs_values[_]] for _ in
                     range(0, len(self.dbs_values), self.val_every_ep)]
             table = wandb.Table(data=data, columns=["Episode", "DBS"])
             summary_data.update({f"DBS Table of {self.val_every_ep}": wandb.plot.bar(table, "Episode", "DBS")})

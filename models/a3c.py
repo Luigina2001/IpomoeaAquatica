@@ -287,7 +287,6 @@ class Worker(mp.Process):
                 f"Worker {self.rank}/return_mean": returns.mean().item()
             })
 
-
             """Compute loss"""
             policy_loss = -(torch.stack(log_probs) * advantages).mean()
             value_loss = F.mse_loss(torch.stack(values), returns, reduction='mean')

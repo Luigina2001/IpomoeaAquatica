@@ -56,6 +56,9 @@ def train(args):
         run.name = agent_name + "-" + run.name if args.sweep_id is None \
             else agent_name + f"-sweep-{args.sweep_id}-" + run.name
         experiment_dir = str(osp.join(experiment_dir if experiment_dir else args.experiment_dir, run.id))
+
+        wandb.define_metric("episode")
+        wandb.define_metric("*", step_metric="episode", step_sync=True)
     else:
         experiment_dir = str(
             osp.join(experiment_dir if experiment_dir else args.experiment_dir, str(time.time())))
@@ -155,6 +158,8 @@ def train(args):
             mmavg_values = []
             wdc_n = 0
             wdc_p = 0
+            curr_score = 0
+            last_score = 0
 
             # Main loop for managing episode counter
             while True:
@@ -205,6 +210,7 @@ def train(args):
 
                                 state = next_state
 
+                        curr_score = sum(rewards)
                         next_value = 0 if done else global_network.critic(torch.FloatTensor(state).unsqueeze(0))
                         returns = global_network.compute_returns(rewards, next_value, dones)
 
@@ -232,8 +238,8 @@ def train(args):
 
                         # DBS
                         if len(rewards) > 1:
-                            dbs = [rewards[i + 1] - rewards[i] for i in range(len(rewards) - 1)]
-                            dbs_values.extend(dbs)
+                            dbs = [curr_score - last_score]
+                            dbs_values.extend([curr_score - last_score])
 
                             # WDC
                             wdc_n = sum([x for x in dbs if x < 0])
@@ -295,7 +301,7 @@ def train(args):
 
                 plt.close()
 
-                data = [[_ * args.val_every_ep, dbs_values[_]] for _ in
+                data = [[_, dbs_values[_]] for _ in
                         range(0, len(dbs_values), args.val_every_ep)]
                 table = wandb.Table(data=data, columns=["Episode", "DBS"])
                 wandb_run.log({f"DBS Table of {args.val_every_ep}": wandb.plot.bar(table, "Episode", "DBS")})
@@ -363,7 +369,7 @@ def argument_parser():
     parser.add_argument("--tune_hyperparameters",
                         action="store_true", default=False)
     parser.add_argument("--project", type=str, default="ipomoea-aquatica")
-    parser.add_argument("--entity", type=str, default="ipomoea-aquatica")
+    parser.add_argument("--entity", type=str, default="ipomoea_aquatica3")
     parser.add_argument("--run_name", type=str, default=None)
     parser.add_argument("--sweep_config", type=str,
                         default=osp.join(os.getcwd(), "sweep.yaml"))
