@@ -168,7 +168,7 @@ class QLearning(RLAgent):
                     q_values_prev = q_values_current
 
                     # Saturation monitoring
-                    if episode % val_every_ep == 0 and early_stopping(delta_q, self, episode, video_path):
+                    if early_stopping(delta_q, self, episode, video_path):
                         break
 
             metric_logger.log_final_metrics(processed_frames)
