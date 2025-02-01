@@ -56,6 +56,9 @@ def train(args):
         run.name = agent_name + "-" + run.name if args.sweep_id is None \
             else agent_name + f"-sweep-{args.sweep_id}-" + run.name
         experiment_dir = str(osp.join(experiment_dir if experiment_dir else args.experiment_dir, run.id))
+
+        wandb.define_metric("episode")
+        wandb.define_metric("*", step_metric="episode", step_sync=True)
     else:
         experiment_dir = str(
             osp.join(experiment_dir if experiment_dir else args.experiment_dir, str(time.time())))
@@ -137,9 +140,9 @@ def train(args):
             print(f"\n====\nStarting A3C training with {args.n_workers} workers...\n====\n")
 
             workers = [
-                Worker(global_network, optimizer, queue, condition, stop_signal, rank, args.n_steps, global_episode,
-                       args.n_episodes,
-                       args.seed, n_threads_per_worker, args.val_every_ep, wandb_run) for rank in range(args.n_workers)]
+                Worker(global_network, optimizer, queue, condition, stop_signal, rank, args.t_max, global_episode,
+                       args.n_episodes, args.seed, n_threads_per_worker, args.val_every_ep, wandb_run, args.n_steps) for
+                rank in range(args.n_workers)]
 
             [worker.start() for worker in workers]
 
@@ -155,6 +158,8 @@ def train(args):
             mmavg_values = []
             wdc_n = 0
             wdc_p = 0
+            curr_score = 0
+            last_score = 0
 
             # Main loop for managing episode counter
             while True:
@@ -205,6 +210,7 @@ def train(args):
 
                                 state = next_state
 
+                        curr_score = sum(rewards)
                         next_value = 0 if done else global_network.critic(torch.FloatTensor(state).unsqueeze(0))
                         returns = global_network.compute_returns(rewards, next_value, dones)
 
@@ -223,31 +229,34 @@ def train(args):
                             "Advantage mean": advantages.mean().item(),
                             "Return mean": returns.mean().item(),
                             "Reward/Score mean": np.mean(rewards),
-                            "Score": sum(rewards)
+                            "Score": curr_score
                         })
 
                         # Avg reward
-                        avg_reward = np.mean(rewards)
-                        avg_rewards.append(avg_reward)
+                        avg_rewards.append(curr_score)
 
                         # DBS
                         if len(rewards) > 1:
-                            dbs = [rewards[i + 1] - rewards[i] for i in range(len(rewards) - 1)]
-                            dbs_values.extend(dbs)
+                            dbs = [curr_score - last_score]
+                            dbs_values.extend([curr_score - last_score])
+
+                            print(dbs_values)
 
                             # WDC
                             wdc_n = sum([x for x in dbs if x < 0])
                             wdc_p = sum([x for x in dbs if x > 0])
 
                             # MMAVG
-                            mmavg = (np.max(rewards) - np.min(rewards)) / avg_reward
+                            print(np.max(rewards) - np.min(rewards))
+                            mmavg = (np.max(rewards) - np.min(rewards)) / curr_score if curr_score > 0 else 0
                             mmavg_values.append(mmavg)
 
                             wandb_run.log({
-                                f"Avg Reward": avg_reward,
+                                f"Avg Reward of 100": curr_score,
                                 f"MMAVG": mmavg if len(mmavg_values) > 0 and mmavg is not None else 0,
-                                f"WDC_n": wdc_n,
-                                f"WDC_p": wdc_p
+                                f"WDCn": wdc_n,
+                                f"WDCp": wdc_p,
+                                f"episode": global_episode.value
                             })
 
                         global_network.train()
@@ -268,6 +277,7 @@ def train(args):
                                 f"\n\n====\nMain process incremented global episode counter: "
                                 f"{global_episode.value}\n====\n\n")
 
+                    last_score = curr_score
                     condition.notify_all()
 
                 # If all episodes are done, exit
@@ -284,7 +294,7 @@ def train(args):
                 plt.figure(figsize=(12, 8))
                 colors = ["red" if v < 0 else "blue" for v in dbs_values]
 
-                episodes = range(len(dbs_values))
+                episodes = [_ * args.val_every_ep for _ in range(1, len(dbs_values) + 1)]
                 plt.bar(episodes, dbs_values, color=colors, width=0.95)
 
                 plt.xlabel("Episode")
@@ -295,8 +305,7 @@ def train(args):
 
                 plt.close()
 
-                data = [[_ * args.val_every_ep, dbs_values[_]] for _ in
-                        range(0, len(dbs_values), args.val_every_ep)]
+                data = [[_ * args.val_every_ep, dbs_values[_ - 1]] for _ in range(1, len(dbs_values) + 1)]
                 table = wandb.Table(data=data, columns=["Episode", "DBS"])
                 wandb_run.log({f"DBS Table of {args.val_every_ep}": wandb.plot.bar(table, "Episode", "DBS")})
 
@@ -363,7 +372,7 @@ def argument_parser():
     parser.add_argument("--tune_hyperparameters",
                         action="store_true", default=False)
     parser.add_argument("--project", type=str, default="ipomoea-aquatica")
-    parser.add_argument("--entity", type=str, default="ipomoea-aquatica")
+    parser.add_argument("--entity", type=str, default="ipomoea_aquatica3")
     parser.add_argument("--run_name", type=str, default=None)
     parser.add_argument("--sweep_config", type=str,
                         default=osp.join(os.getcwd(), "sweep.yaml"))
@@ -395,7 +404,7 @@ def argument_parser():
     parser.add_argument("--held_out_ratio", type=float, default=0.1,
                         help="Probability of putting a state into the hold-out set in the DQN class")
     parser.add_argument("--epsilon", type=float, default=1e-3, help="Threshold for Q-values saturation")
-    parser.add_argument("--tmax", type=int, default=20, help="Maximum steps for A3C updates")
+    parser.add_argument("--t_max", type=int, default=40000, help="Maximum steps for A3C updates")
     parser.add_argument("--beta", type=float, default=0.01, help="Entropy regularization factor")
     parser.add_argument("--n_workers", type=int, default=os.cpu_count(), help="Number of workers for A3C")
     parser.add_argument("--n_vcpus", type=int, default=os.cpu_count(), help="Number of vCPUS for A3C")

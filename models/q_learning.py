@@ -151,9 +151,9 @@ class QLearning(RLAgent):
 
                 cumulative_rewards.append(cumulative_reward)
                 # Cumulative Reward
-                metric_logger.plot(cumulative_rewards, "Cumulative Reward per Episode", "Episode", "Cumulative Reward")
+                metric_logger.plot(cumulative_rewards, "Cumulative Reward", "Episode", "Cumulative Reward")
                 # Raw Rewards
-                metric_logger.plot(metric_logger.raw_rewards, "Raw Rewards", "Episode", "Cumulative Reward")
+                metric_logger.plot(metric_logger.raw_rewards, "Score", "Episode", "Score")
 
                 if self.env.has_wrapper_attr("recorded_frames"):
                     avg_playtime += len(self.env.get_wrapper_attr("recorded_frames"))
@@ -168,9 +168,9 @@ class QLearning(RLAgent):
                     q_values_prev = q_values_current
 
                     # Saturation monitoring
-                    if episode % val_every_ep == 0 and early_stopping(delta_q, self, episode, video_path):
+                    if early_stopping(delta_q, self, episode, video_path):
                         break
 
-            metric_logger.log_final_metrics(episode, processed_frames)
+            metric_logger.log_final_metrics(processed_frames)
 
             self.env.close()
