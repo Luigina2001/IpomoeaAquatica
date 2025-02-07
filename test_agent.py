@@ -84,7 +84,7 @@ def test(args):
             if agent.env.recorded_frames:
                 avg_playtime += len(agent.env.recorded_frames)
 
-            if args.agent == "DQN":
+            if args.agent == "DQN" or args.agent == "A3C":
                 score = cumulative_reward
 
             total_rewards.append(cumulative_reward)
@@ -127,7 +127,7 @@ def argument_parser():
                         default=osp.join(os.getcwd(), "evaluation_dir"))
     parser.add_argument("--checkpoint_path", type=str, default=None)
     parser.add_argument("--agent", type=str, default="DQN",
-                        choices=["QLearning", "DQN"])
+                        choices=["QLearning", "DQN", "A3C"])
 
     return parser
 
